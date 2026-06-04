@@ -60,3 +60,23 @@ function cs() {
       ;;
   esac
 }
+
+function _cs() {
+  case $CURRENT in
+    2)
+      local -a cmds
+      cmds=('use:switch provider' 'status:show current provider')
+      _describe 'command' cmds
+      ;;
+    3)
+      case $words[2] in
+        use)
+          local -a providers
+          providers=('claude:Claude.ai (OAuth)' 'minimax:MiniMax API')
+          _describe 'provider' providers
+          ;;
+      esac
+      ;;
+  esac
+}
+(( $+functions[compdef] )) && compdef _cs cs
