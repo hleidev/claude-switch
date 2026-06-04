@@ -1,52 +1,55 @@
-# claude-switch
+# cs — Claude Code provider switcher
 
 [中文](README.zh.md)
 
-Per-terminal Claude Code provider switcher. New terminals load the default provider automatically; switch to any other provider mid-session with a single command. Closing the terminal resets to the default.
+Per-terminal Claude Code provider switcher. Switch between Claude.ai (OAuth) and third-party API providers (MiniMax, DeepSeek, …) with a single command. Each terminal window is independent.
 
-## File structure
+## How it works
 
+Claude Code picks the backend based on environment variables:
+
+- `ANTHROPIC_AUTH_TOKEN` set → API key mode (uses `ANTHROPIC_BASE_URL`)
+- `ANTHROPIC_AUTH_TOKEN` unset → OAuth mode (reads `~/.claude/.credentials.json`)
+
+`cs use <provider>` sources the provider config into the current shell. `cs use claude` unsets everything to fall back to OAuth. Each terminal has its own environment, so windows are fully isolated.
+
+## Prerequisites
+
+- **zsh** — macOS Catalina+ default; verify with `echo $SHELL`
+- **python3** — for API key registration
+  - macOS: `xcode-select --install` (includes python3) or `brew install python3`
+  - Linux: usually pre-installed; otherwise `apt install python3` / `dnf install python3`
+- **claude CLI** — Claude Code must be installed and `claude` in your PATH
+
+## Install
+
+```bash
+git clone <repo> ~/Personal/claude-switch
+cd ~/Personal/claude-switch
+bash install.sh
+source ~/.zshrc
 ```
-claude-switch/
-├── claude.zsh                   # Main script - source this in ~/.zshrc
-├── claude.local.zsh.example     # Default provider template (copy -> claude.local.zsh)
-├── claude.local.zsh             # Your default provider loader (gitignored)
-├── providers/
-│   ├── minimax.zsh.example      # MiniMax config template
-│   ├── minimax.zsh              # Your MiniMax config (gitignored)
-│   ├── deepseek.zsh.example     # DeepSeek config template
-│   └── deepseek.zsh             # Your DeepSeek config (gitignored)
-└── install.sh                   # One-time setup script
-```
+
+`install.sh` copies `cs` to `~/.local/bin/cs` and adds the shell integration line to `~/.zshrc`.
 
 ## First-time setup
 
-**1. Create your provider config files**
+**Add a provider:**
 
 ```bash
-cp providers/minimax.zsh.example providers/minimax.zsh
-# Edit providers/minimax.zsh and fill in MINIMAX_API_KEY
-
-cp providers/deepseek.zsh.example providers/deepseek.zsh
-# Edit providers/deepseek.zsh and fill in DEEPSEEK_API_KEY
+cs add minimax    # opens $EDITOR to fill in your API key
 ```
 
-**2. Run the install script**
+**Set a default** (loads automatically in every new terminal):
 
 ```bash
-bash install.sh
+cs default minimax
 ```
 
-The script will:
-- Register each provider's API key in Claude Code's approved list
-- Create `claude.local.zsh` (sets the default provider for new terminals)
-- Check Claude (claude.ai) OAuth login status and prompt if needed
-- Write the source line to `~/.zshrc`
-
-**3. Reload your shell**
+**Log in to Claude.ai** (for OAuth mode):
 
 ```bash
-source ~/.zshrc
+cs add claude
 ```
 
 ## Usage
@@ -55,51 +58,53 @@ source ~/.zshrc
 |---|---|
 | `cs use minimax` | Switch current terminal to MiniMax |
 | `cs use deepseek` | Switch current terminal to DeepSeek |
-| `cs use claude` | Switch current terminal to Claude (claude.ai) |
+| `cs use claude` | Switch current terminal to Claude.ai (OAuth) |
+| `cs default minimax` | Set MiniMax as default for new terminals |
+| `cs default` | Show current global default |
+| `cs list` | List installed providers |
 | `cs status` | Show current provider and env vars |
+| `cs add minimax` | Add MiniMax provider (opens editor) |
+| `cs edit minimax` | Edit MiniMax config (model name, key, etc.) |
+| `cs remove minimax` | Remove MiniMax provider |
 
-- New terminals load the **default provider** set in `claude.local.zsh`
+- New terminals load the **global default** set by `cs default`
 - Different terminal windows can use different providers simultaneously
-- Switching only affects **newly started** `claude` instances; running sessions are unaffected
+- Switching only affects **newly started** `claude` instances
 
-## How it works
+## Provider config location
 
-Claude Code picks the backend based on env var priority:
-
-- `ANTHROPIC_AUTH_TOKEN` set -> API key mode (uses `ANTHROPIC_BASE_URL`)
-- `ANTHROPIC_AUTH_TOKEN` unset -> OAuth mode (reads `~/.claude/.credentials.json`)
-
-`cs use <provider>` sources the provider's config file to set the vars. `cs use claude` unsets them all. Each terminal has its own environment, so windows are fully isolated.
+All provider configs are stored in `~/.claude-switch/providers/`. The project repo contains no secrets.
 
 ## Adding a provider
 
-Copy an existing example as a starting point:
+Built-in templates: `minimax`, `deepseek`, `claude`
 
 ```bash
-# Template (committed, shows up in tab completion)
-cp providers/minimax.zsh.example providers/openai.zsh.example
-# Edit providers/openai.zsh.example — replace endpoint, models, and key var name
-
-# Your config with the real key (gitignored)
-cp providers/openai.zsh.example providers/openai.zsh
-# Edit providers/openai.zsh and fill in your API key
+cs add minimax    # creates ~/.claude-switch/providers/minimax.zsh and opens $EDITOR
 ```
 
-Then register the key:
+To update a provider config (model name changed, key rotated, etc.):
 
 ```bash
-bash install.sh
+cs edit minimax
 ```
-
-Tab completion reads `providers/*.zsh.example` to list available providers. If you only create the `.zsh` file, the provider works but won't appear in completions.
 
 ## New machine setup
 
 ```bash
 git clone <repo> ~/Personal/claude-switch
 cd ~/Personal/claude-switch
-cp providers/minimax.zsh.example providers/minimax.zsh
-# Fill in your API key(s)
 bash install.sh
 source ~/.zshrc
+cs add minimax    # re-enter your API key
+cs default minimax
 ```
+
+## Testing
+
+```bash
+brew install bats-core
+bats test/
+```
+
+Tests use an isolated `CS_HOME` under `/tmp/cs-test-*` and never touch `~/.claude-switch/`. Temporary directories are removed automatically after each test.
