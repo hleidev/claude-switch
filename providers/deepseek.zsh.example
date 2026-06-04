@@ -1,0 +1,20 @@
+# DeepSeek provider
+# cp providers/deepseek.zsh.example providers/deepseek.zsh
+# Fill in DEEPSEEK_API_KEY, then reload your shell.
+#
+# Get API key: https://platform.deepseek.com
+
+export DEEPSEEK_API_KEY="your-deepseek-api-key-here"
+
+export ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic"
+export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY}"
+
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+export CLAUDE_CODE_EFFORT_LEVEL="max"
+
+export ANTHROPIC_MODEL="deepseek-v4-pro[1m]"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-v4-pro[1m]"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="deepseek-v4-pro[1m]"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="deepseek-v4-flash[1m]"
+
+export CLAUDE_SWITCH_PROVIDER="deepseek"

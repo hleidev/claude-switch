@@ -1,1 +1,3 @@
 claude.local.zsh
+providers/*.zsh
+!providers/*.zsh.example

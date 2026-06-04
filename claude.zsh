@@ -1,10 +1,10 @@
-# Claude Code provider 切换脚本
-# 在 ~/.zshrc 末尾加一行：
+# Claude Code provider switcher
+# Add to the end of ~/.zshrc:
 #   [[ -f ~/Personal/claude-switch/claude.zsh ]] && source ~/Personal/claude-switch/claude.zsh
 
 _CLAUDE_SWITCH_DIR="$(cd "$(dirname "${(%):-%x}")" && pwd)"
 
-# 加载本地 token（gitignored）
+# Load default provider (gitignored)
 [[ -f "${_CLAUDE_SWITCH_DIR}/claude.local.zsh" ]] && source "${_CLAUDE_SWITCH_DIR}/claude.local.zsh"
 
 function cs() {
@@ -16,33 +16,42 @@ function cs() {
       case "$target" in
         claude|pro)
           unset CLAUDE_CONFIG_DIR
-          unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN MINIMAX_API_KEY
+          unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
           unset ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL
           unset ANTHROPIC_DEFAULT_SONNET_MODEL
           unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
           unset API_TIMEOUT_MS CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+          unset CLAUDE_CODE_EFFORT_LEVEL
+          unset MINIMAX_API_KEY DEEPSEEK_API_KEY
+          unset CLAUDE_SWITCH_PROVIDER
           echo "[claude-switch] switched to Claude (claude.ai)"
           ;;
-        minimax)
-          source "${_CLAUDE_SWITCH_DIR}/claude.local.zsh"
-          echo "[claude-switch] switched to MiniMax"
-          ;;
         *)
-          echo "unknown provider: $target"
-          echo "usage: cs use <claude|minimax>"
+          local _pfile="${_CLAUDE_SWITCH_DIR}/providers/${target}.zsh"
+          if [[ -f "${_pfile}" ]]; then
+            source "${_pfile}"
+            echo "[claude-switch] switched to ${target}"
+          elif [[ -f "${_pfile}.example" ]]; then
+            echo "[claude-switch] provider '${target}' not configured"
+            echo "  cp providers/${target}.zsh.example providers/${target}.zsh"
+            echo "  then fill in your API key"
+          else
+            local -a _available=(claude)
+            for _p in "${_CLAUDE_SWITCH_DIR}/providers/"*.zsh(N); do
+              _available+=("${_p:t:r}")
+            done
+            echo "unknown provider: ${target}"
+            echo "available: ${(j:, :)_available}"
+          fi
           ;;
       esac
       ;;
     status)
       local _provider
       if [[ -n "${ANTHROPIC_AUTH_TOKEN}" ]]; then
-        if [[ "${ANTHROPIC_BASE_URL}" == *minimax* ]]; then
-          _provider="MiniMax"
-        else
-          _provider="API key (${ANTHROPIC_BASE_URL:-unknown endpoint})"
-        fi
+        _provider="${CLAUDE_SWITCH_PROVIDER:-unknown (${ANTHROPIC_BASE_URL:-no URL})}"
       else
-        _provider="Claude (claude.ai)"
+        _provider="claude"
       fi
       echo "Active provider  : ${_provider}"
       echo "Base URL         : ${ANTHROPIC_BASE_URL:-(unset)}"
@@ -54,9 +63,10 @@ function cs() {
       echo "Default haiku    : ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-(unset)}"
       echo "Config dir       : ${CLAUDE_CONFIG_DIR:-~/.claude (default)}"
       echo "Disable traffic  : ${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-(unset)}"
+      echo "Effort level     : ${CLAUDE_CODE_EFFORT_LEVEL:-(unset)}"
       ;;
     *)
-      echo "usage: cs use <claude|minimax> | cs status"
+      echo "usage: cs use <provider> | cs status"
       ;;
   esac
 }
@@ -72,7 +82,10 @@ function _cs() {
       case $words[2] in
         use)
           local -a providers
-          providers=('claude:Claude.ai (OAuth)' 'minimax:MiniMax API')
+          providers=('claude:Claude.ai (OAuth)')
+          for _f in "${_CLAUDE_SWITCH_DIR}/providers/"*.zsh.example(N); do
+            providers+=("${_f:t:r:r}")
+          done
           _describe 'provider' providers
           ;;
       esac

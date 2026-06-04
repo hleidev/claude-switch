@@ -1,22 +1,7 @@
-# 复制本文件为 claude.local.zsh，填入真实 token，该文件不进 git
+# Copy this file to claude.local.zsh (gitignored).
 # cp claude.local.zsh.example claude.local.zsh
+#
+# Uncomment the provider you want loaded by default in every new terminal:
 
-# MiniMax API Key（从 https://platform.minimax.io 或 https://platform.minimaxi.com 获取）
-export MINIMAX_API_KEY="your-minimax-api-key-here"
-
-# 端点：中国大陆用 minimaxi.com，海外用 minimax.io
-export ANTHROPIC_BASE_URL="https://api.minimaxi.com/anthropic"
-export ANTHROPIC_AUTH_TOKEN="${MINIMAX_API_KEY}"
-
-# 超时（MiniMax 响应较慢，建议保留）
-export API_TIMEOUT_MS="3000000"
-
-# 关闭非必要流量（自动更新、错误上报等）
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
-
-# 模型配置（全部映射到 MiniMax-M3-highspeed）
-export ANTHROPIC_MODEL="MiniMax-M3-highspeed"
-export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M3-highspeed"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="MiniMax-M3-highspeed"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="MiniMax-M3-highspeed"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="MiniMax-M3-highspeed"
+source "${_CLAUDE_SWITCH_DIR}/providers/minimax.zsh"
+# source "${_CLAUDE_SWITCH_DIR}/providers/deepseek.zsh"
