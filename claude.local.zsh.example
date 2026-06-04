@@ -1,7 +1,0 @@
-# Copy this file to claude.local.zsh (gitignored).
-# cp claude.local.zsh.example claude.local.zsh
-#
-# Uncomment the provider you want loaded by default in every new terminal:
-
-source "${_CLAUDE_SWITCH_DIR}/providers/minimax.zsh"
-# source "${_CLAUDE_SWITCH_DIR}/providers/deepseek.zsh"
