@@ -1,95 +1,105 @@
 # claude-switch
 
-Claude Code 多 Provider 切换方案。默认走 MiniMax，按需在当前终端切换至 Claude (claude.ai) 或其他 provider，关闭终端自动恢复默认。
+[中文](README.zh.md)
 
-## 文件说明
+Per-terminal Claude Code provider switcher. New terminals load the default provider automatically; switch to any other provider mid-session with a single command. Closing the terminal resets to the default.
+
+## File structure
 
 ```
 claude-switch/
-├── claude.zsh                  # 主脚本，source 到 ~/.zshrc
-├── claude.local.zsh.example    # token 模板，复制后填入真实值
-├── claude.local.zsh            # 真实 token（gitignored，不进仓库）
-└── setup.sh                    # 新机器一次性初始化脚本
+├── claude.zsh                   # Main script - source this in ~/.zshrc
+├── claude.local.zsh.example     # Default provider template (copy -> claude.local.zsh)
+├── claude.local.zsh             # Your default provider loader (gitignored)
+├── providers/
+│   ├── minimax.zsh.example      # MiniMax config template
+│   ├── minimax.zsh              # Your MiniMax config (gitignored)
+│   ├── deepseek.zsh.example     # DeepSeek config template
+│   └── deepseek.zsh             # Your DeepSeek config (gitignored)
+└── install.sh                   # One-time setup script
 ```
 
-## 首次配置
+## First-time setup
 
-**1. 填入 token**
+**1. Create your provider config files**
 
 ```bash
-cp claude.local.zsh.example claude.local.zsh
-# 编辑 claude.local.zsh，填入 MINIMAX_API_KEY
+cp providers/minimax.zsh.example providers/minimax.zsh
+# Edit providers/minimax.zsh and fill in MINIMAX_API_KEY
+
+cp providers/deepseek.zsh.example providers/deepseek.zsh
+# Edit providers/deepseek.zsh and fill in DEEPSEEK_API_KEY
 ```
 
-**2. 运行初始化脚本**
+**2. Run the install script**
 
 ```bash
-bash setup.sh
+bash install.sh
 ```
 
-脚本会自动完成：
-- 检查 token 是否已填写
-- 注册 MiniMax key 到 Claude Code 审批列表
-- 检查 Claude (claude.ai) OAuth 登录状态，未登录则引导完成授权
-- 将 source 行写入 `~/.zshrc`
+The script will:
+- Register each provider's API key in Claude Code's approved list
+- Create `claude.local.zsh` (sets the default provider for new terminals)
+- Check Claude (claude.ai) OAuth login status and prompt if needed
+- Write the source line to `~/.zshrc`
 
-**3. 重载 shell**
+**3. Reload your shell**
 
 ```bash
 source ~/.zshrc
 ```
 
-## 日常使用
+## Usage
 
-| 命令 | 效果 |
+| Command | Effect |
 |---|---|
-| `cs use minimax` | 当前终端切换到 MiniMax |
-| `cs use claude` | 当前终端切换到 Claude (claude.ai) |
-| `cs status` | 查看当前终端的 provider 状态 |
+| `cs use minimax` | Switch current terminal to MiniMax |
+| `cs use deepseek` | Switch current terminal to DeepSeek |
+| `cs use claude` | Switch current terminal to Claude (claude.ai) |
+| `cs status` | Show current provider and env vars |
 
-- 新开终端默认走 **MiniMax**
-- 不同终端窗口可以同时使用不同 provider，互不影响
-- 切换仅对**新启动**的 `claude` 实例生效，已在运行的会话不受影响
+- New terminals load the **default provider** set in `claude.local.zsh`
+- Different terminal windows can use different providers simultaneously
+- Switching only affects **newly started** `claude` instances; running sessions are unaffected
 
-## 切换原理
+## How it works
 
-两个 provider 使用不同的认证机制，Claude Code 按以下优先级选择：
+Claude Code picks the backend based on env var priority:
 
-- `ANTHROPIC_AUTH_TOKEN` 有值 → API key 模式（MiniMax）
-- `ANTHROPIC_AUTH_TOKEN` 未设置 → OAuth 模式（Claude (claude.ai)，读 `~/.claude/.credentials.json`）
+- `ANTHROPIC_AUTH_TOKEN` set -> API key mode (uses `ANTHROPIC_BASE_URL`)
+- `ANTHROPIC_AUTH_TOKEN` unset -> OAuth mode (reads `~/.claude/.credentials.json`)
 
-`cs use minimax` 设置 token，`cs use claude` 清除 token，两者天然隔离，共用同一个 `~/.claude` 配置目录。
+`cs use <provider>` sources the provider's config file to set the vars. `cs use claude` unsets them all. Each terminal has its own environment, so windows are fully isolated.
 
-## 新增 Provider
+## Adding a provider
 
-以 DeepSeek 为例，在 `claude.zsh` 的 `cs()` 函数中加一个 case 分支：
-
-```bash
-deepseek)
-  export ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic"
-  export ANTHROPIC_AUTH_TOKEN="${DEEPSEEK_API_KEY}"
-  export ANTHROPIC_MODEL="deepseek-chat"
-  unset ANTHROPIC_SMALL_FAST_MODEL
-  unset ANTHROPIC_DEFAULT_SONNET_MODEL
-  unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-  echo "[claude-switch] 当前终端 → DeepSeek"
-  ;;
-```
-
-在 `claude.local.zsh` 中加入：
+Copy an existing example as a starting point:
 
 ```bash
-export DEEPSEEK_API_KEY="your-deepseek-api-key-here"
+# Template (committed, shows up in tab completion)
+cp providers/minimax.zsh.example providers/openai.zsh.example
+# Edit providers/openai.zsh.example — replace endpoint, models, and key var name
+
+# Your config with the real key (gitignored)
+cp providers/openai.zsh.example providers/openai.zsh
+# Edit providers/openai.zsh and fill in your API key
 ```
 
-之后 `cs use deepseek` 即可使用，无需任何额外初始化。
+Then register the key:
 
-## 新机器部署
+```bash
+bash install.sh
+```
+
+Tab completion reads `providers/*.zsh.example` to list available providers. If you only create the `.zsh` file, the provider works but won't appear in completions.
+
+## New machine setup
 
 ```bash
 git clone <repo> ~/Personal/claude-switch
-cp ~/Personal/claude-switch/claude.local.zsh.example ~/Personal/claude-switch/claude.local.zsh
-# 填入 token
-bash ~/Personal/claude-switch/setup.sh
+cd ~/Personal/claude-switch
+cp providers/minimax.zsh.example providers/minimax.zsh
+# Fill in your API key(s)
+bash install.sh
 source ~/.zshrc
 ```
