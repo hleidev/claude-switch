@@ -21,16 +21,16 @@ fi
 # 2. Install cs to ~/.local/bin
 INSTALL_DIR="${HOME}/.local/bin"
 mkdir -p "$INSTALL_DIR"
-cp "${SCRIPT_DIR}/cs" "${INSTALL_DIR}/cs"
-chmod +x "${INSTALL_DIR}/cs"
-echo "[1/2] installed: ${INSTALL_DIR}/cs"
+ln -sf "${SCRIPT_DIR}/cs" "${INSTALL_DIR}/cs"
+chmod +x "${SCRIPT_DIR}/cs"
+echo "[1/2] linked: ${INSTALL_DIR}/cs → ${SCRIPT_DIR}/cs"
 
 # 3. Configure ~/.zshrc (PATH export + shell integration)
 ZSHRC="${HOME}/.zshrc"
 PATH_LINE='export PATH="${HOME}/.local/bin:${PATH}"'
-ACTIVATE_LINE='command -v cs &>/dev/null && eval "$(cs init zsh)"'
+ACTIVATE_LINE='[[ -x "${HOME}/.local/bin/cs" ]] && eval "$("${HOME}/.local/bin/cs" init zsh)"'
 
-has_activate=0; grep -qF "cs init zsh"                              "$ZSHRC" 2>/dev/null && has_activate=1
+has_activate=0; grep -qF '"${HOME}/.local/bin/cs" init zsh'         "$ZSHRC" 2>/dev/null && has_activate=1
 has_path=0;    grep -qE 'export PATH=.*\.local/bin'                 "$ZSHRC" 2>/dev/null && has_path=1
 
 if [[ $has_activate -eq 1 && $has_path -eq 1 ]]; then
