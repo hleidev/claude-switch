@@ -1,0 +1,22 @@
+# Built-in provider presets. Values are sourced from each provider's official
+# Claude Code documentation; do not invent parameters. Adding a new preset is a
+# data-only change here. Only doc-verified providers are shipped.
+
+[minimax]
+base_url = "https://api.minimaxi.com/anthropic"
+model = "MiniMax-M3"
+[minimax.env]
+API_TIMEOUT_MS = "3000000"
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+CLAUDE_CODE_AUTO_COMPACT_WINDOW = "512000"
+
+[deepseek]
+base_url = "https://api.deepseek.com/anthropic"
+model = "deepseek-v4-pro"
+haiku_model = "deepseek-v4-flash"
+[deepseek.env]
+CLAUDE_CODE_EFFORT_LEVEL = "max"
+CLAUDE_CODE_SUBAGENT_MODEL = "deepseek-v4-flash"
+
+[anthropic]
+base_url = "https://api.anthropic.com"

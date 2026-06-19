@@ -1,110 +1,91 @@
-# cs — Claude Code provider switcher
+# claude-switch (`cs`)
 
 [中文](README.zh.md)
 
-Per-terminal Claude Code provider switcher. Switch between Claude.ai (OAuth) and third-party API providers (MiniMax, DeepSeek, …) with a single command. Each terminal window is independent.
+Per-terminal Claude Code provider switcher. Switch between Claude.ai (OAuth) and
+third-party API providers (MiniMax, DeepSeek, …) with one command — **each
+terminal window is independent**, which native `settings.json` cannot do.
+
+The PATH binary is `claude-switch`; you drive it through the short `cs` shell
+function that the installer adds (it exists because env injection must happen in
+your shell, not a child process).
 
 ## How it works
 
-Claude Code picks the backend based on environment variables:
+Claude Code picks its backend from environment variables:
 
-- `ANTHROPIC_AUTH_TOKEN` set → API key mode (uses `ANTHROPIC_BASE_URL`)
-- `ANTHROPIC_AUTH_TOKEN` unset → OAuth mode (reads `~/.claude/.credentials.json`)
+- `ANTHROPIC_AUTH_TOKEN` set → API-key mode (uses `ANTHROPIC_BASE_URL`)
+- `ANTHROPIC_AUTH_TOKEN` unset → OAuth mode (`~/.claude/.credentials.json`)
 
-`cs use <provider>` sources the provider config into the current shell. `cs use claude` unsets everything to fall back to OAuth. Each terminal has its own environment, so windows are fully isolated.
+`cs use <provider>` injects a provider's env into the current shell; `cs use
+claude` clears it and falls back to OAuth. Switching only affects **newly
+started** `claude` instances in that terminal.
 
-## Prerequisites
+## Requirements
 
-- **zsh** — macOS Catalina+ default; verify with `echo $SHELL`
-- **python3** — for API key registration
-  - macOS: `xcode-select --install` (includes python3) or `brew install python3`
-  - Linux: usually pre-installed; otherwise `apt install python3` / `dnf install python3`
-- **claude CLI** — Claude Code must be installed and `claude` in your PATH
+- **Go** (to build) — `brew install go`
+- **zsh or bash** — interactive shell integration
 
 ## Install
 
 ```bash
-git clone <repo> ~/Personal/claude-switch
-cd ~/Personal/claude-switch
-bash install.sh
-source ~/.zshrc
+git clone https://github.com/hleidev/claude-switch.git
+cd claude-switch
+make install          # builds, installs to ~/.local/bin, wires up your rc file
+exec $SHELL           # or open a new terminal
 ```
 
-`install.sh` copies `cs` to `~/.local/bin/cs` and adds the shell integration line to `~/.zshrc`.
+Override the location like any autotools-style project: `make install PREFIX=/usr/local`.
 
-## First-time setup
+## Migrating from the old bash version
 
-**Add a provider:**
+If you used the previous unversioned bash `cs` (data in `~/.claude-switch/`):
 
 ```bash
-cs add minimax    # opens $EDITOR to fill in your API key
+cs migrate
 ```
 
-**Set a default** (loads automatically in every new terminal):
-
-```bash
-cs default minimax
-```
-
-**Log in to Claude.ai** (for OAuth mode):
-
-```bash
-cs add claude
-```
+It imports your providers and default, re-registers your keys with Claude Code,
+and offers to remove the old shell integration. Your old `~/.claude-switch/` is
+left untouched until you delete it yourself.
 
 ## Usage
 
 | Command | Effect |
 |---|---|
-| `cs use minimax` | Switch current terminal to MiniMax |
-| `cs use deepseek` | Switch current terminal to DeepSeek |
-| `cs use claude` | Switch current terminal to Claude.ai (OAuth) |
-| `cs default minimax` | Set MiniMax as default for new terminals |
-| `cs default` | Show current global default |
-| `cs list` | List installed providers |
-| `cs status` | Show current provider and env vars |
-| `cs add minimax` | Add MiniMax provider (opens editor) |
-| `cs edit minimax` | Edit MiniMax config (model name, key, etc.) |
-| `cs remove minimax` | Remove MiniMax provider |
+| `cs add [provider]` | Add a provider (interactive picker + hidden key entry; `--key-stdin` to script) |
+| `cs use <provider>` | Switch this terminal to a provider |
+| `cs use claude` | Reset this terminal to Claude.ai (OAuth) |
+| `cs default [provider]` | Show / set the provider new terminals load |
+| `cs set <p> <field> [value]` | Edit one field (`cs set <p> key` prompts hidden for the API key) |
+| `cs unset <p> <field>` | Clear one field |
+| `cs list` | List providers (✓ default, ● this terminal) |
+| `cs status` | Current terminal's provider and config summary |
+| `cs edit [provider]` | Open the whole config in `$EDITOR` |
+| `cs remove <provider>` | Remove a provider |
+| `cs doctor` | Diagnose the setup |
+| `cs migrate` | Import from the legacy `~/.claude-switch` layout |
+| `cs version` | Print the version |
 
-- New terminals load the **global default** set by `cs default`
-- Different terminal windows can use different providers simultaneously
-- Switching only affects **newly started** `claude` instances
+Built-in presets: `minimax`, `deepseek`, `anthropic`. Anything else is a
+`custom…` provider you supply a base URL for.
 
-## Provider config location
+## Configuration
 
-All provider configs are stored in `~/.claude-switch/providers/`. The project repo contains no secrets.
+A single file at `${XDG_CONFIG_HOME:-~/.config}/claude-switch/config.toml`
+(`0600`), secrets inline. Edit it directly with `cs edit`, or field-by-field with
+`cs set`. Keys are never printed by `cs list` / `cs status`.
 
-## Adding a provider
-
-Built-in templates: `minimax`, `deepseek`, `claude`
-
-```bash
-cs add minimax    # creates ~/.claude-switch/providers/minimax.zsh and opens $EDITOR
-```
-
-To update a provider config (model name changed, key rotated, etc.):
+## Uninstall
 
 ```bash
-cs edit minimax
+make uninstall        # removes shell integration (asks about config) + the binary
 ```
 
-## New machine setup
+## Development
 
 ```bash
-git clone <repo> ~/Personal/claude-switch
-cd ~/Personal/claude-switch
-bash install.sh
-source ~/.zshrc
-cs add minimax    # re-enter your API key
-cs default minimax
+make build            # -> bin/claude-switch
+make test             # go test ./...
+make fmt vet
 ```
-
-## Testing
-
-```bash
-brew install bats-core
-bats test/
-```
-
-Tests use an isolated `CS_HOME` under `/tmp/cs-test-*` and never touch `~/.claude-switch/`. Temporary directories are removed automatically after each test.
