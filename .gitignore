@@ -1,2 +1,5 @@
 .env
 /bin/
+
+# Internal design notes (kept locally, not published)
+/docs/superpowers/
