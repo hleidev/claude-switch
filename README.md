@@ -1,9 +1,17 @@
+<div align="center">
+
 # claude-switch (`cs`)
+
+**Switch Claude Code's backend per terminal — one command, no global config.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 
-[中文](README.zh.md)
+[Install](#install) · [Quick start](#quick-start) · [Commands](#commands) · [中文](README.zh.md)
+
+</div>
+
+---
 
 Switch Claude Code between Claude.ai (OAuth) and third-party API providers per
 terminal, with one command. Each terminal window is independent, so you can run

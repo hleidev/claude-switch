@@ -1,9 +1,17 @@
+<div align="center">
+
 # claude-switch (`cs`)
+
+**为每个终端单独切换 Claude Code 后端 —— 一条命令，无需改动全局配置。**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 
-[English](README.md)
+[安装](#安装) · [快速开始](#快速开始) · [命令](#命令) · [English](README.md)
+
+</div>
+
+---
 
 为每个终端单独切换 Claude Code 的后端。一条命令，在 Claude.ai（OAuth）与第三方 API
 （MiniMax、DeepSeek、GLM 等）之间切换；每个终端窗口互相独立，一个终端的切换不会
