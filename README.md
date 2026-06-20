@@ -31,7 +31,7 @@ started** `claude` instances in that terminal.
 - Built-in presets for minimax, deepseek, glm, and anthropic: add a key and you're set
 - `cs use claude` falls back to your Claude.ai OAuth login
 - Keys live in a `0600` config file and never show up in `cs list` or `cs status`
-- Shell integration for zsh and bash is wired up by the installer
+- The installer sets up shell integration for zsh and bash
 
 ## Requirements
 
@@ -78,7 +78,7 @@ processes started in this terminal; other terminals are unaffected.
 | `cs version` | Print the version |
 
 Built-in presets: `minimax`, `deepseek`, `glm`, `anthropic`. Anything else is a
-`custom…` provider you supply a base URL for (`--base-url`).
+`custom…` provider that needs its own base URL (`--base-url`).
 
 ## Configuration
 
@@ -116,8 +116,8 @@ make install          # rebuilds, overwrites ~/.local/bin/claude-switch
 cs version            # confirm the version
 ```
 
-Providers you already `cs add`ed do not follow preset changes — their model
-names are written into your config. To refresh one to the latest preset
+Providers you've already added with `cs add` don't follow preset changes — their
+model names are written into your config. To refresh one to the latest preset
 defaults, run `cs add <provider> --force` (re-enter the key) or edit it with
 `cs edit`.
 
