@@ -1,6 +1,6 @@
 module github.com/hleidev/claude-switch
 
-go 1.26.4
+go 1.26
 
 require (
 	github.com/charmbracelet/huh v1.0.0
