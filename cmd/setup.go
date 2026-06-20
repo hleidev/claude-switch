@@ -55,7 +55,7 @@ func installIntegration(home string) (rc string, added bool, err error) {
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Install shell integration into your rc file (idempotent)",
+	Short: "Install shell integration into your rc file (run this once)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out := cmd.OutOrStdout()
