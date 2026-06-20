@@ -114,3 +114,7 @@ make build            # -> bin/claude-switch
 make test             # go test ./...
 make fmt vet
 ```
+
+## 许可证
+
+MIT,详见 [LICENSE](LICENSE)。

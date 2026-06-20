@@ -121,3 +121,7 @@ make build            # -> bin/claude-switch
 make test             # go test ./...
 make fmt vet
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
