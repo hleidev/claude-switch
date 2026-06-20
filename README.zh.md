@@ -35,6 +35,22 @@ exec $SHELL           # 或开一个新终端
 
 可像 autotools 项目一样改路径:`make install PREFIX=/usr/local`。
 
+## 更新
+
+预设(内置模型名、base URL 等)是**编译时**打进二进制的,所以更新不是改配置文件,
+而是拉代码后重新编译安装:
+
+```bash
+cd claude-switch
+git pull
+make install          # 重新编译,覆盖 ~/.local/bin/claude-switch
+cs version            # 确认版本
+```
+
+已 `cs add` 过的服务商不会自动跟随预设变化(模型名等已写进你的配置)。要刷新某个
+服务商到最新预设默认值,用 `cs add <provider> --force`(需重新输入密钥),或 `cs edit`
+手动改。
+
 ## 从旧 bash 版本迁移
 
 若你用过之前未版本化的 bash `cs`(数据在 `~/.claude-switch/`):
@@ -54,8 +70,8 @@ shell 集成。旧的 `~/.claude-switch/` 会原样保留,由你自行删除。
 | `cs use <provider>` | 把当前终端切到某服务商 |
 | `cs use claude` | 当前终端重置回 Claude.ai(OAuth) |
 | `cs default [provider]` | 查看 / 设置新终端默认加载的服务商 |
-| `cs set <p> <字段> [值]` | 改单个字段(`cs set <p> key` 隐藏输入 API key) |
-| `cs unset <p> <字段>` | 清除单个字段 |
+| `cs set <p> <变量> [值]` | 改单个环境变量,变量名用真名如 `ANTHROPIC_MODEL`(`cs set <p> key` 隐藏输入 API key) |
+| `cs unset <p> <变量>` | 清除单个环境变量 |
 | `cs list` | 列出服务商(✓ 默认,● 当前终端) |
 | `cs status` | 当前终端的服务商与配置摘要 |
 | `cs edit [provider]` | 在 `$EDITOR` 打开整个配置 |
@@ -64,12 +80,28 @@ shell 集成。旧的 `~/.claude-switch/` 会原样保留,由你自行删除。
 | `cs migrate` | 从旧 `~/.claude-switch` 布局导入 |
 | `cs version` | 输出版本号 |
 
-内置预设:`minimax`、`deepseek`、`anthropic`。其余走 `custom…`,你自己填 base URL。
+内置预设:`minimax`、`deepseek`、`glm`、`anthropic`。其余走 `custom…`,你自己填 base URL。
 
 ## 配置
 
-单文件 `${XDG_CONFIG_HOME:-~/.config}/claude-switch/config.toml`(`0600`),密钥内联。
-用 `cs edit` 直接编辑,或用 `cs set` 逐字段改。`cs list` / `cs status` 不会打印密钥。
+单文件 `${XDG_CONFIG_HOME:-~/.config}/claude-switch/config.toml`(`0600`)。
+**一个服务商就是一张扁平的环境变量表**,键是真实变量名。内置预设里的模型、超时等
+默认值由项目维护(见 `internal/presets/data/presets.toml`),所以预设服务商的配置
+通常只需要存密钥一项:
+
+```toml
+version = 2
+default_provider = "glm"
+
+[providers.glm]
+ANTHROPIC_AUTH_TOKEN = "sk-..."
+# 想覆盖预设的某个变量,就写那一行(优先级高于预设):
+# ANTHROPIC_MODEL = "glm-4.7"
+```
+
+`cs use` 时按 `defaults → 预设 → 你的覆盖` 合并导出。自定义(非预设)服务商没有模板,
+需自带 `ANTHROPIC_BASE_URL`。用 `cs edit` 直接编辑,或用 `cs set` 逐项改。
+`cs list` / `cs status` 不会打印密钥。
 
 ## 卸载
 

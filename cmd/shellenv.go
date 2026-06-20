@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/presets"
 	"github.com/hleidev/claude-switch/internal/shellenv"
 )
 
@@ -55,7 +56,8 @@ var shellenvCmd = &cobra.Command{
 			return nil
 		}
 
-		code, err := shellenv.ForProvider(cfg, name)
+		preset, _ := presets.Lookup(name)
+		code, err := shellenv.ForProvider(cfg, name, preset)
 		if err != nil {
 			if shellenvAnnounce {
 				return err
@@ -64,7 +66,7 @@ var shellenvCmd = &cobra.Command{
 		}
 		fmt.Fprint(out, code)
 		if shellenvAnnounce {
-			if p.AuthToken == "" {
+			if p.AuthToken() == "" {
 				fmt.Fprintf(errOut, "⚠ %s 未设置 auth_token；claude 将回落到 OAuth（运行：cs set %s key）\n", name, name)
 			}
 			fmt.Fprintf(errOut, "✓ 已切换到 %s\n", name)

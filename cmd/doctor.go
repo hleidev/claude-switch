@@ -45,7 +45,8 @@ var doctorCmd = &cobra.Command{
 
 		for _, name := range sortedNames(cfg) {
 			p := cfg.Providers[name]
-			fmt.Fprintf(out, "%s provider %q has a key\n", ok(p.AuthToken != ""), name)
+			fmt.Fprintf(out, "%s provider %q has a key\n", ok(p.AuthToken() != ""), name)
+			fmt.Fprintf(out, "%s provider %q resolves a base_url\n", ok(resolvedBaseURL(cfg, name) != ""), name)
 		}
 
 		if path, err := claudejson.DefaultPath(); err == nil {

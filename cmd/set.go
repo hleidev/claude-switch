@@ -10,12 +10,11 @@ import (
 )
 
 var setCmd = &cobra.Command{
-	Use:   "set <provider> <field> [value]",
-	Short: "Set a single provider field",
-	Long: "Set a provider field. Bare names address typed fields\n" +
-		"(base_url/model/small_fast_model/sonnet_model/opus_model/haiku_model);\n" +
-		"env.<KEY> addresses passthrough env. Use `cs set <provider> key` (no value)\n" +
-		"to set the API key via hidden input.",
+	Use:   "set <provider> <VAR> [value]",
+	Short: "Set a single provider variable",
+	Long: "Set a provider variable by its real environment variable name\n" +
+		"(e.g. `cs set glm ANTHROPIC_MODEL glm-4.7`). Use `cs set <provider> key`\n" +
+		"(no value) to set the API key via hidden input.",
 	Args:              cobra.RangeArgs(2, 3),
 	ValidArgsFunction: providerNames,
 	RunE: func(cmd *cobra.Command, args []string) error {

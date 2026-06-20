@@ -24,7 +24,7 @@ func legacyHome(home string) string {
 
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "Import providers from the legacy ~/.claude-switch layout (schema v0 → v1)",
+	Short: "Import providers from the legacy ~/.claude-switch layout (schema v0 → current)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out := cmd.OutOrStdout()
@@ -73,7 +73,7 @@ var migrateCmd = &cobra.Command{
 			base := config.Provider{}
 			known := false
 			if preset, ok := presets.Lookup(name); ok {
-				base = preset
+				base = config.Provider(preset)
 				known = true
 			}
 			p := migrate.ToProvider(base, vars)
@@ -81,8 +81,8 @@ var migrateCmd = &cobra.Command{
 			imported++
 
 			// Re-register the imported key so Claude Code doesn't re-prompt.
-			if p.AuthToken != "" {
-				registerKeyBestEffort(cmd, p.AuthToken)
+			if p.AuthToken() != "" {
+				registerKeyBestEffort(cmd, p.AuthToken())
 			}
 			if known {
 				fmt.Fprintf(out, "✓ imported %s (matched built-in preset)\n", name)

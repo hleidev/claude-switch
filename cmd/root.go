@@ -5,7 +5,16 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+
+	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/presets"
 )
+
+func init() {
+	// Let config minimization resolve built-in presets without the config
+	// package importing them (keeps it decoupled from the embedded data).
+	config.SetPresetLookup(presets.Lookup)
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "claude-switch",

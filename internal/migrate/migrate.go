@@ -49,50 +49,30 @@ func expand(s string, vars map[string]string) string {
 	return s
 }
 
-// typedEnvFields maps the well-known Claude Code env vars to a setter on the
-// provider's typed fields. Anything not in this map is imported into [env].
-var typedEnvFields = map[string]func(*config.Provider, string){
-	"ANTHROPIC_BASE_URL":             func(p *config.Provider, v string) { p.BaseURL = v },
-	"ANTHROPIC_AUTH_TOKEN":           func(p *config.Provider, v string) { p.AuthToken = v },
-	"ANTHROPIC_MODEL":                func(p *config.Provider, v string) { p.Model = v },
-	"ANTHROPIC_SMALL_FAST_MODEL":     func(p *config.Provider, v string) { p.SmallFastModel = v },
-	"ANTHROPIC_DEFAULT_SONNET_MODEL": func(p *config.Provider, v string) { p.SonnetModel = v },
-	"ANTHROPIC_DEFAULT_OPUS_MODEL":   func(p *config.Provider, v string) { p.OpusModel = v },
-	"ANTHROPIC_DEFAULT_HAIKU_MODEL":  func(p *config.Provider, v string) { p.HaikuModel = v },
-}
-
 // ToProvider overlays parsed export vars onto a base provider (which may be a
-// preset). Well-known vars set typed fields; every other safe var is imported
-// into [env] so best-effort migration doesn't silently drop provider-specific
-// settings (timeouts, effort levels, etc.). Unsafe env key names are skipped.
+// preset). Each var is a real environment variable name, so it maps directly
+// into the flat provider map. Unsafe key names are skipped. Variables referenced
+// by another var's value (e.g. SOME_API_KEY in
+// ANTHROPIC_AUTH_TOKEN="${SOME_API_KEY}") are pure holders: their reference is
+// resolved into the referring var, but the holder itself is not carried over —
+// that would leave the secret duplicated under a junk name.
 func ToProvider(base config.Provider, vars map[string]string) config.Provider {
-	// Variable names referenced by a core/typed field (e.g. SOME_API_KEY in
-	// ANTHROPIC_AUTH_TOKEN="${SOME_API_KEY}") are pure holders: resolve them into
-	// the typed field, but do not also copy them into [env] — that would leave
-	// the secret duplicated under a junk name.
 	holders := map[string]bool{}
-	for k := range typedEnvFields {
-		if raw, ok := vars[k]; ok {
-			for _, ref := range refNames(raw) {
-				holders[ref] = true
-			}
+	for _, raw := range vars {
+		for _, ref := range refNames(raw) {
+			holders[ref] = true
 		}
 	}
 
-	p := base
+	p := config.Provider{}
+	for k, v := range base {
+		p[k] = v
+	}
 	for k, raw := range vars {
-		v := expand(raw, vars)
-		if set, ok := typedEnvFields[k]; ok {
-			set(&p, v)
-			continue
-		}
 		if holders[k] || !config.ValidEnvKey(k) {
 			continue
 		}
-		if p.Env == nil {
-			p.Env = map[string]string{}
-		}
-		p.Env[k] = v
+		p[k] = expand(raw, vars)
 	}
 	return p
 }

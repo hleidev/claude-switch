@@ -6,86 +6,83 @@ func newConfigWith(p Provider) *Config {
 	return &Config{Providers: map[string]Provider{"p": p}}
 }
 
-func TestSetFieldTyped(t *testing.T) {
+func TestSetFieldByEnvName(t *testing.T) {
 	c := newConfigWith(Provider{})
-	if err := c.SetField("p", "model", "MiniMax-M3"); err != nil {
+	if err := c.SetField("p", "ANTHROPIC_MODEL", "MiniMax-M3"); err != nil {
 		t.Fatalf("SetField: %v", err)
 	}
-	if c.Providers["p"].Model != "MiniMax-M3" {
-		t.Errorf("Model = %q", c.Providers["p"].Model)
+	if c.Providers["p"]["ANTHROPIC_MODEL"] != "MiniMax-M3" {
+		t.Errorf("ANTHROPIC_MODEL = %q", c.Providers["p"]["ANTHROPIC_MODEL"])
 	}
 }
 
-func TestSetFieldEnv(t *testing.T) {
+func TestSetFieldKeyAlias(t *testing.T) {
 	c := newConfigWith(Provider{})
-	if err := c.SetField("p", "env.API_TIMEOUT_MS", "3000000"); err != nil {
+	if err := c.SetField("p", "key", "sk-x"); err != nil {
 		t.Fatalf("SetField: %v", err)
 	}
-	if c.Providers["p"].Env["API_TIMEOUT_MS"] != "3000000" {
-		t.Errorf("Env = %+v", c.Providers["p"].Env)
-	}
-}
-
-func TestSetFieldUnknownBareErrors(t *testing.T) {
-	c := newConfigWith(Provider{})
-	if err := c.SetField("p", "bogus", "x"); err == nil {
-		t.Error("expected error for unknown bare field")
+	if c.Providers["p"].AuthToken() != "sk-x" {
+		t.Errorf("key alias did not set %s: %+v", AuthTokenKey, c.Providers["p"])
 	}
 }
 
 func TestSetFieldUnknownProvider(t *testing.T) {
 	c := &Config{Providers: map[string]Provider{}}
-	if err := c.SetField("nope", "model", "x"); err == nil {
+	if err := c.SetField("nope", "ANTHROPIC_MODEL", "x"); err == nil {
 		t.Error("expected error for unknown provider")
 	}
 }
 
-func TestUnsetFieldTyped(t *testing.T) {
-	c := newConfigWith(Provider{Model: "x"})
-	if err := c.UnsetField("p", "model"); err != nil {
+func TestSetFieldOnNilProviderMap(t *testing.T) {
+	// A provider whose map is nil (e.g. an empty table) must still accept a set.
+	c := &Config{Providers: map[string]Provider{"p": nil}}
+	if err := c.SetField("p", "ANTHROPIC_MODEL", "x"); err != nil {
+		t.Fatalf("SetField on nil provider map: %v", err)
+	}
+	if c.Providers["p"]["ANTHROPIC_MODEL"] != "x" {
+		t.Errorf("value not set: %+v", c.Providers["p"])
+	}
+}
+
+func TestUnsetField(t *testing.T) {
+	c := newConfigWith(Provider{"ANTHROPIC_MODEL": "x"})
+	if err := c.UnsetField("p", "ANTHROPIC_MODEL"); err != nil {
 		t.Fatalf("UnsetField: %v", err)
 	}
-	if c.Providers["p"].Model != "" {
-		t.Errorf("Model = %q, want empty", c.Providers["p"].Model)
+	if _, ok := c.Providers["p"]["ANTHROPIC_MODEL"]; ok {
+		t.Error("ANTHROPIC_MODEL still present")
 	}
 }
 
-func TestUnsetFieldEnv(t *testing.T) {
-	c := newConfigWith(Provider{Env: map[string]string{"K": "v"}})
-	if err := c.UnsetField("p", "env.K"); err != nil {
+func TestUnsetFieldKeyAlias(t *testing.T) {
+	c := newConfigWith(Provider{"ANTHROPIC_AUTH_TOKEN": "sk-x"})
+	if err := c.UnsetField("p", "key"); err != nil {
 		t.Fatalf("UnsetField: %v", err)
 	}
-	if _, ok := c.Providers["p"].Env["K"]; ok {
-		t.Error("env key K still present")
+	if c.Providers["p"].AuthToken() != "" {
+		t.Error("key alias did not unset the token")
 	}
 }
 
-func TestUnsetFieldEmptyEnvKeyErrors(t *testing.T) {
-	c := newConfigWith(Provider{Env: map[string]string{"K": "v"}})
-	if err := c.UnsetField("p", "env."); err == nil {
-		t.Error("expected error for empty env key")
+func TestUnsetFieldMissingKeyErrors(t *testing.T) {
+	c := newConfigWith(Provider{"K": "v"})
+	if err := c.UnsetField("p", "ANTHROPIC_MODEL"); err == nil {
+		t.Error("expected error unsetting a non-existent variable")
 	}
 }
 
-func TestUnsetFieldMissingEnvKeyErrors(t *testing.T) {
-	c := newConfigWith(Provider{Env: map[string]string{"K": "v"}})
-	if err := c.UnsetField("p", "env.NOPE"); err == nil {
-		t.Error("expected error unsetting a non-existent env key")
-	}
-}
-
-func TestSetFieldRejectsUnsafeEnvKey(t *testing.T) {
+func TestSetFieldRejectsUnsafeName(t *testing.T) {
 	c := newConfigWith(Provider{})
 	for _, bad := range []string{"FOO; rm -rf ~", "HAS SPACE", "", "1LEADING_DIGIT", "a-b"} {
-		if err := c.SetField("p", "env."+bad, "x"); err == nil {
-			t.Errorf("expected SetField to reject unsafe env key %q", bad)
+		if err := c.SetField("p", bad, "x"); err == nil {
+			t.Errorf("expected SetField to reject unsafe name %q", bad)
 		}
 	}
 }
 
-func TestSetFieldAcceptsValidEnvKey(t *testing.T) {
+func TestSetFieldAcceptsValidName(t *testing.T) {
 	c := newConfigWith(Provider{})
-	if err := c.SetField("p", "env.API_TIMEOUT_MS", "1"); err != nil {
-		t.Errorf("valid env key rejected: %v", err)
+	if err := c.SetField("p", "API_TIMEOUT_MS", "1"); err != nil {
+		t.Errorf("valid name rejected: %v", err)
 	}
 }

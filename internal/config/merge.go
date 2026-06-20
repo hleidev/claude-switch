@@ -11,65 +11,46 @@ type EnvVar struct {
 	Value string
 }
 
-// orderedTypedFields maps typed provider fields to their Claude Code env vars,
-// in deterministic output order.
-var orderedTypedFields = []struct {
-	env string
-	get func(Provider) string
-}{
-	{"ANTHROPIC_BASE_URL", func(p Provider) string { return p.BaseURL }},
-	{"ANTHROPIC_AUTH_TOKEN", func(p Provider) string { return p.AuthToken }},
-	{"ANTHROPIC_MODEL", func(p Provider) string { return p.Model }},
-	{"ANTHROPIC_SMALL_FAST_MODEL", func(p Provider) string { return p.SmallFastModel }},
-	{"ANTHROPIC_DEFAULT_SONNET_MODEL", func(p Provider) string { return p.SonnetModel }},
-	{"ANTHROPIC_DEFAULT_OPUS_MODEL", func(p Provider) string { return p.OpusModel }},
-	{"ANTHROPIC_DEFAULT_HAIKU_MODEL", func(p Provider) string { return p.HaikuModel }},
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// BuildEnv computes the ordered environment assignments for a provider, applying
-// merge precedence: [defaults].env -> typed fields -> [providers.X.env]. Empty
-// typed fields produce no variable. CLAUDE_SWITCH_PROVIDER is always appended
-// last. The returned slice is deterministic.
-func (c *Config) BuildEnv(name string) ([]EnvVar, error) {
+// BuildEnv computes the ordered environment assignments for a provider by
+// merging three flat layers, each overriding the previous on a per-key basis:
+//
+//	[defaults]  →  preset (built-in template, may be nil)  →  the provider's own entries
+//
+// A key whose final value is empty is treated as "not exported" (so an override
+// can blank out an inherited variable). Unsafe variable names are skipped as
+// defense in depth. Output is sorted for determinism, with ProviderVar appended
+// last. The preset is injected by the caller (cmd layer) so this package stays
+// decoupled from the embedded presets and is easy to test in isolation.
+func (c *Config) BuildEnv(name string, preset map[string]string) ([]EnvVar, error) {
 	p, ok := c.Providers[name]
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", name)
 	}
 
-	values := map[string]string{}
-	var order []string
-	put := func(k, v string) {
-		if _, seen := values[k]; !seen {
-			order = append(order, k)
-		}
-		values[k] = v
+	merged := map[string]string{}
+	for k, v := range c.Defaults {
+		merged[k] = v
+	}
+	for k, v := range preset {
+		merged[k] = v
+	}
+	for k, v := range p {
+		merged[k] = v
 	}
 
-	for _, k := range sortedKeys(c.Defaults.Env) {
-		put(k, c.Defaults.Env[k])
-	}
-	for _, f := range orderedTypedFields {
-		if v := f.get(p); v != "" {
-			put(f.env, v)
+	keys := make([]string, 0, len(merged))
+	for k, v := range merged {
+		if k == ProviderVar || v == "" || !ValidEnvKey(k) {
+			continue
 		}
+		keys = append(keys, k)
 	}
-	for _, k := range sortedKeys(p.Env) {
-		put(k, p.Env[k])
-	}
-	put("CLAUDE_SWITCH_PROVIDER", name)
+	sort.Strings(keys)
 
-	out := make([]EnvVar, 0, len(order))
-	for _, k := range order {
-		out = append(out, EnvVar{Key: k, Value: values[k]})
+	out := make([]EnvVar, 0, len(keys)+1)
+	for _, k := range keys {
+		out = append(out, EnvVar{Key: k, Value: merged[k]})
 	}
+	out = append(out, EnvVar{Key: ProviderVar, Value: name})
 	return out, nil
 }

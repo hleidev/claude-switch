@@ -19,14 +19,15 @@ func shellQuote(s string) string {
 
 // ForProvider returns eval-able shell code that exports the provider's
 // environment and records the variable names in _CS_MANAGED_VARS so the next
-// switch can clear them.
+// switch can clear them. The preset (built-in template, may be nil) is supplied
+// by the caller and merged under the provider's own entries.
 //
 // Clearing previously-managed variables is intentionally NOT done here: it must
 // happen in the shell function (see cmd/init.go), because zsh does not
 // word-split an unquoted `$_CS_MANAGED_VARS` in a `for` loop, so a reset loop
 // embedded in this eval'd payload would silently no-op under zsh.
-func ForProvider(c *config.Config, name string) (string, error) {
-	vars, err := c.BuildEnv(name)
+func ForProvider(c *config.Config, name string, preset map[string]string) (string, error) {
+	vars, err := c.BuildEnv(name, preset)
 	if err != nil {
 		return "", err
 	}

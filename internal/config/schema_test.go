@@ -63,7 +63,62 @@ func TestLoadStampsAndBacksUpVersionlessFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.Providers["minimax"].BaseURL != "https://x" {
+	if reloaded.Providers["minimax"].BaseURL() != "https://x" {
 		t.Errorf("provider lost across upgrade: %+v", reloaded.Providers)
+	}
+}
+
+func TestMigrateV1ToV2FlattensProvider(t *testing.T) {
+	// A v1 provider with typed fields and a nested env table becomes a flat
+	// variable map; empty typed fields are dropped.
+	tree := map[string]any{
+		"version": int64(1),
+		"providers": map[string]any{
+			"glm": map[string]any{
+				"base_url":     "https://open.bigmodel.cn/api/anthropic",
+				"auth_token":   "sk-x",
+				"model":        "glm-5.2",
+				"sonnet_model": "glm-5.2[1m]",
+				"opus_model":   "", // empty typed field must be dropped
+				"env": map[string]any{
+					"API_TIMEOUT_MS": "3000000",
+					"EMPTY":          "", // empty env entry must be dropped
+				},
+			},
+		},
+		"defaults": map[string]any{
+			"env": map[string]any{"FOO": "bar"},
+		},
+	}
+	if _, err := upgradeTree(tree); err != nil {
+		t.Fatalf("upgradeTree: %v", err)
+	}
+	if treeVersion(tree) != 2 {
+		t.Fatalf("version = %d, want 2", treeVersion(tree))
+	}
+	glm := tree["providers"].(map[string]any)["glm"].(map[string]any)
+	want := map[string]string{
+		"ANTHROPIC_BASE_URL":             "https://open.bigmodel.cn/api/anthropic",
+		"ANTHROPIC_AUTH_TOKEN":           "sk-x",
+		"ANTHROPIC_MODEL":                "glm-5.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[1m]",
+		"API_TIMEOUT_MS":                 "3000000",
+	}
+	for k, v := range want {
+		if glm[k] != v {
+			t.Errorf("glm[%q] = %v, want %q", k, glm[k], v)
+		}
+	}
+	for _, gone := range []string{"base_url", "model", "env", "ANTHROPIC_DEFAULT_OPUS_MODEL", "EMPTY"} {
+		if _, ok := glm[gone]; ok {
+			t.Errorf("key %q should have been dropped/renamed: %+v", gone, glm)
+		}
+	}
+	defaults := tree["defaults"].(map[string]any)
+	if defaults["FOO"] != "bar" {
+		t.Errorf("defaults not flattened: %+v", defaults)
+	}
+	if _, ok := defaults["env"]; ok {
+		t.Errorf("defaults.env should have been lifted: %+v", defaults)
 	}
 }

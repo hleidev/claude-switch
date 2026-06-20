@@ -29,12 +29,12 @@ var listCmd = &cobra.Command{
 		for _, name := range sortedNames(cfg) {
 			p := cfg.Providers[name]
 			key := "no key"
-			if p.AuthToken != "" {
+			if p.AuthToken() != "" {
 				key = "key set"
 			}
 			fmt.Fprintf(out, "%s %s  %-14s %s  (%s)\n",
 				glyph(name == cfg.DefaultProvider, "✓"), glyph(name == current, "●"),
-				name, p.BaseURL, key)
+				name, resolvedBaseURL(cfg, name), key)
 		}
 		// claude is always an available target (OAuth fallback), not a config entry.
 		fmt.Fprintf(out, "%s %s  %-14s %s\n",

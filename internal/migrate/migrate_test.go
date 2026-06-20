@@ -6,7 +6,7 @@ import (
 	"github.com/hleidev/claude-switch/internal/config"
 )
 
-func TestToProviderTypedAndEnv(t *testing.T) {
+func TestToProviderFlattensVars(t *testing.T) {
 	vars := map[string]string{
 		"ANTHROPIC_BASE_URL":            "https://x/anthropic",
 		"ANTHROPIC_MODEL":               "custom-model",
@@ -17,16 +17,16 @@ func TestToProviderTypedAndEnv(t *testing.T) {
 		"BAD KEY":                       "dropped", // unsafe name must be skipped
 	}
 	p := ToProvider(config.Provider{}, vars)
-	if p.BaseURL != "https://x/anthropic" || p.Model != "custom-model" || p.AuthToken != "sk-tok" {
-		t.Errorf("typed fields wrong: %+v", p)
+	if p.BaseURL() != "https://x/anthropic" || p["ANTHROPIC_MODEL"] != "custom-model" || p.AuthToken() != "sk-tok" {
+		t.Errorf("core vars wrong: %+v", p)
 	}
-	if p.HaikuModel != "fast" {
-		t.Errorf("role model not mapped: %+v", p)
+	if p["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "fast" {
+		t.Errorf("role model not carried: %+v", p)
 	}
-	if p.Env["API_TIMEOUT_MS"] != "3000000" || p.Env["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
-		t.Errorf("non-core exports not imported into env: %+v", p.Env)
+	if p["API_TIMEOUT_MS"] != "3000000" || p["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
+		t.Errorf("passthrough vars not imported: %+v", p)
 	}
-	if _, ok := p.Env["BAD KEY"]; ok {
+	if _, ok := p["BAD KEY"]; ok {
 		t.Error("unsafe env key should have been skipped")
 	}
 }
@@ -53,21 +53,21 @@ func TestToProviderResolvesKeyReference(t *testing.T) {
 		"ANTHROPIC_AUTH_TOKEN": "${DEEPSEEK_API_KEY}",
 	}
 	p := ToProvider(config.Provider{}, vars)
-	if p.AuthToken != "sk-real-1234567890" {
-		t.Errorf("auth_token = %q, want resolved real key", p.AuthToken)
+	if p.AuthToken() != "sk-real-1234567890" {
+		t.Errorf("auth_token = %q, want resolved real key", p.AuthToken())
 	}
-	if _, ok := p.Env["DEEPSEEK_API_KEY"]; ok {
-		t.Errorf("holder var should not be duplicated into env: %+v", p.Env)
+	if _, ok := p["DEEPSEEK_API_KEY"]; ok {
+		t.Errorf("holder var should not be duplicated: %+v", p)
 	}
 }
 
 func TestToProviderPreservesPresetWhenAbsent(t *testing.T) {
-	base := config.Provider{BaseURL: "https://preset", Model: "preset-model", Env: map[string]string{"K": "v"}}
+	base := config.Provider{"ANTHROPIC_BASE_URL": "https://preset", "ANTHROPIC_MODEL": "preset-model", "K": "v"}
 	p := ToProvider(base, map[string]string{"ANTHROPIC_AUTH_TOKEN": "sk-only"})
-	if p.BaseURL != "https://preset" || p.Model != "preset-model" || p.Env["K"] != "v" {
+	if p.BaseURL() != "https://preset" || p["ANTHROPIC_MODEL"] != "preset-model" || p["K"] != "v" {
 		t.Errorf("preset fields should be preserved when not in vars: %+v", p)
 	}
-	if p.AuthToken != "sk-only" {
+	if p.AuthToken() != "sk-only" {
 		t.Errorf("token not applied: %+v", p)
 	}
 }

@@ -1,80 +1,51 @@
 package config
 
-import (
-	"fmt"
-	"sort"
-	"strings"
-)
+import "fmt"
 
-// typedSetters maps a bare field path to a setter on *Provider.
-var typedSetters = map[string]func(*Provider, string){
-	"base_url":         func(p *Provider, v string) { p.BaseURL = v },
-	"auth_token":       func(p *Provider, v string) { p.AuthToken = v },
-	"model":            func(p *Provider, v string) { p.Model = v },
-	"small_fast_model": func(p *Provider, v string) { p.SmallFastModel = v },
-	"sonnet_model":     func(p *Provider, v string) { p.SonnetModel = v },
-	"opus_model":       func(p *Provider, v string) { p.OpusModel = v },
-	"haiku_model":      func(p *Provider, v string) { p.HaikuModel = v },
-}
-
-func typedFieldNames() string {
-	names := make([]string, 0, len(typedSetters))
-	for k := range typedSetters {
-		names = append(names, k)
+// resolveFieldKey maps the friendly secret aliases to the real variable name;
+// every other field is already a real environment variable name.
+func resolveFieldKey(field string) string {
+	if field == "key" || field == "auth_token" {
+		return AuthTokenKey
 	}
-	sort.Strings(names)
-	return strings.Join(names, "/")
+	return field
 }
 
-// SetField sets a single provider field. Bare names address typed fields;
-// "env.<KEY>" addresses the passthrough env map. Unknown bare names error.
-func (c *Config) SetField(provider, path, value string) error {
+// SetField sets a single provider variable. The field is the real environment
+// variable name (e.g. ANTHROPIC_MODEL), except "key"/"auth_token" which alias
+// the secret. The name must be a valid environment variable identifier.
+func (c *Config) SetField(provider, field, value string) error {
 	p, ok := c.Providers[provider]
 	if !ok {
 		return fmt.Errorf("provider %q not found", provider)
 	}
-	if key, isEnv := strings.CutPrefix(path, "env."); isEnv {
-		if !ValidEnvKey(key) {
-			return fmt.Errorf("invalid env key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
-		}
-		if p.Env == nil {
-			p.Env = map[string]string{}
-		}
-		p.Env[key] = value
-		c.Providers[provider] = p
-		return nil
+	key := resolveFieldKey(field)
+	if !ValidEnvKey(key) {
+		return fmt.Errorf("invalid variable name %q: must match [A-Za-z_][A-Za-z0-9_]*", field)
 	}
-	set, ok := typedSetters[path]
-	if !ok {
-		return fmt.Errorf("unknown field %q (use one of %s, or env.<KEY>)", path, typedFieldNames())
+	if p == nil {
+		p = Provider{}
 	}
-	set(&p, value)
+	p[key] = value
 	c.Providers[provider] = p
 	return nil
 }
 
-// UnsetField clears a single provider field (typed field or env.<KEY>).
-func (c *Config) UnsetField(provider, path string) error {
+// UnsetField clears a single provider variable by its real name (or the
+// "key"/"auth_token" alias).
+func (c *Config) UnsetField(provider, field string) error {
 	p, ok := c.Providers[provider]
 	if !ok {
 		return fmt.Errorf("provider %q not found", provider)
 	}
-	if key, isEnv := strings.CutPrefix(path, "env."); isEnv {
-		if !ValidEnvKey(key) {
-			return fmt.Errorf("invalid env key %q", key)
-		}
-		if _, present := p.Env[key]; !present {
-			return fmt.Errorf("%s has no env key %q", provider, key)
-		}
-		delete(p.Env, key)
-		c.Providers[provider] = p
-		return nil
+	key := resolveFieldKey(field)
+	if !ValidEnvKey(key) {
+		return fmt.Errorf("invalid variable name %q", field)
 	}
-	set, ok := typedSetters[path]
-	if !ok {
-		return fmt.Errorf("unknown field %q (use one of %s, or env.<KEY>)", path, typedFieldNames())
+	if _, present := p[key]; !present {
+		return fmt.Errorf("%s has no variable %q", provider, key)
 	}
-	set(&p, "")
+	delete(p, key)
 	c.Providers[provider] = p
 	return nil
 }

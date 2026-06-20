@@ -1,5 +1,7 @@
 // Package presets embeds built-in provider definitions so `cs add` can offer a
-// curated menu. Presets carry no secrets; the user supplies auth_token.
+// curated menu. A preset is a flat map of environment variables to export (the
+// project-maintained template); it carries no secret — the user supplies the
+// API key, which is merged in at use time.
 package presets
 
 import (
@@ -7,14 +9,12 @@ import (
 	"sort"
 
 	toml "github.com/pelletier/go-toml/v2"
-
-	"github.com/hleidev/claude-switch/internal/config"
 )
 
 //go:embed data/presets.toml
 var presetsData []byte
 
-var presets map[string]config.Provider
+var presets map[string]map[string]string
 
 func init() {
 	if err := toml.Unmarshal(presetsData, &presets); err != nil {
@@ -22,8 +22,9 @@ func init() {
 	}
 }
 
-// Lookup returns the preset for name (auth_token empty) and whether it exists.
-func Lookup(name string) (config.Provider, bool) {
+// Lookup returns the preset's environment variables for name and whether it
+// exists.
+func Lookup(name string) (map[string]string, bool) {
 	p, ok := presets[name]
 	return p, ok
 }

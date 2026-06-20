@@ -18,19 +18,15 @@ import (
 // addOptions is the resolved input for adding a provider. The interactive
 // prompts and flag parsing both reduce to this struct so the core is testable.
 type addOptions struct {
-	Name           string
-	BaseURL        string
-	Model          string
-	SmallFastModel string
-	SonnetModel    string
-	OpusModel      string
-	HaikuModel     string
-	AuthToken      string
-	Env            map[string]string
-	Force          bool
+	Name    string
+	BaseURL string // only for custom providers; presets supply their own
+	Key     string
+	Force   bool
 }
 
 // applyAdd validates options and writes the provider into cfg (without saving).
+// A preset provider needs only the key; a custom one must supply a base_url,
+// since there is no template to resolve it from.
 func applyAdd(cfg *config.Config, opts addOptions) error {
 	if opts.Name == "" {
 		return fmt.Errorf("provider name is required")
@@ -41,21 +37,19 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 	if _, exists := cfg.Providers[opts.Name]; exists && !opts.Force {
 		return fmt.Errorf("provider %q already exists (edit it with `cs set`/`cs edit`, or pass --force)", opts.Name)
 	}
-	if opts.BaseURL == "" {
-		return fmt.Errorf("base_url is required for %q", opts.Name)
+	_, isPreset := presets.Lookup(opts.Name)
+	if !isPreset && opts.BaseURL == "" {
+		return fmt.Errorf("base_url is required for custom provider %q", opts.Name)
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = map[string]config.Provider{}
 	}
-	p := config.Provider{
-		BaseURL:        opts.BaseURL,
-		Model:          opts.Model,
-		SmallFastModel: opts.SmallFastModel,
-		SonnetModel:    opts.SonnetModel,
-		OpusModel:      opts.OpusModel,
-		HaikuModel:     opts.HaikuModel,
-		AuthToken:      opts.AuthToken,
-		Env:            opts.Env,
+	p := config.Provider{}
+	if opts.BaseURL != "" {
+		p[config.BaseURLKey] = opts.BaseURL
+	}
+	if opts.Key != "" {
+		p[config.AuthTokenKey] = opts.Key
 	}
 	cfg.Providers[opts.Name] = p
 	return nil
@@ -63,7 +57,6 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 
 var (
 	addKeyStdin bool
-	addModel    string
 	addBaseURL  string
 	addForce    bool
 	addNoVerify bool
@@ -94,7 +87,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		opts := resolveOptions(name, key)
+		opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
 		if err := applyAdd(cfg, opts); err != nil {
 			return err
 		}
@@ -106,7 +99,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isInteractive() {
-		return fmt.Errorf("not a terminal: provide the key non-interactively with --key-stdin (and --base-url/--model for custom providers)")
+		return fmt.Errorf("not a terminal: provide the key non-interactively with --key-stdin (and --base-url for custom providers)")
 	}
 
 	// Interactive path.
@@ -127,17 +120,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if key == "" {
 		return fmt.Errorf("no key entered")
 	}
-	opts := resolveOptions(name, key)
+	opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
 	if customURL != "" {
 		opts.BaseURL = customURL
 	}
-	// Allow overriding the model interactively (default = preset/flag value).
-	model := opts.Model
-	if err := huh.NewInput().Title("Model").Value(&model).Run(); err != nil {
-		return err
-	}
-	opts.Model = strings.TrimSpace(model)
-
 	if err := applyAdd(cfg, opts); err != nil {
 		return err
 	}
@@ -149,28 +135,6 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveOptions merges preset data (if the name matches one) with flag
-// overrides and the supplied key.
-func resolveOptions(name, key string) addOptions {
-	opts := addOptions{Name: name, AuthToken: strings.TrimSpace(key), Force: addForce}
-	if preset, ok := presets.Lookup(name); ok {
-		opts.BaseURL = preset.BaseURL
-		opts.Model = preset.Model
-		opts.SmallFastModel = preset.SmallFastModel
-		opts.SonnetModel = preset.SonnetModel
-		opts.OpusModel = preset.OpusModel
-		opts.HaikuModel = preset.HaikuModel
-		opts.Env = preset.Env
-	}
-	if addBaseURL != "" {
-		opts.BaseURL = addBaseURL
-	}
-	if addModel != "" {
-		opts.Model = addModel
-	}
-	return opts
-}
-
 // finishAdd runs the post-write side effects: connectivity probe, key
 // registration, and success hints.
 func finishAdd(cmd *cobra.Command, opts addOptions) {
@@ -179,14 +143,25 @@ func finishAdd(cmd *cobra.Command, opts addOptions) {
 	path, _ := config.ConfigPath()
 
 	if !addNoVerify {
-		if err := probe(opts.BaseURL); err != nil {
-			fmt.Fprintf(errOut, "⚠ host unreachable (%v); saved anyway\n", err)
-		} else {
-			// We only verified DNS/TCP/TLS; an API error would still surface at runtime.
-			fmt.Fprintln(errOut, "… host reachable ✓")
+		baseURL := opts.BaseURL
+		if baseURL == "" {
+			if preset, ok := presets.Lookup(opts.Name); ok {
+				baseURL = preset[config.BaseURLKey]
+			}
+		}
+		switch {
+		case baseURL == "":
+			fmt.Fprintln(errOut, "⚠ no base_url to verify; saved anyway")
+		default:
+			if err := probe(baseURL); err != nil {
+				fmt.Fprintf(errOut, "⚠ host unreachable (%v); saved anyway\n", err)
+			} else {
+				// We only verified DNS/TCP/TLS; an API error would still surface at runtime.
+				fmt.Fprintln(errOut, "… host reachable ✓")
+			}
 		}
 	}
-	registered := registerKeyBestEffort(cmd, opts.AuthToken)
+	registered := registerKeyBestEffort(cmd, opts.Key)
 
 	fmt.Fprintf(out, "✓ wrote '%s' → %s\n", opts.Name, path)
 	if registered {
@@ -255,7 +230,6 @@ func readAllStdin(r io.Reader) (string, error) {
 
 func init() {
 	addCmd.Flags().BoolVar(&addKeyStdin, "key-stdin", false, "read the API key from stdin (non-interactive)")
-	addCmd.Flags().StringVar(&addModel, "model", "", "model name (overrides preset default)")
 	addCmd.Flags().StringVar(&addBaseURL, "base-url", "", "API base URL (required for custom providers)")
 	addCmd.Flags().BoolVar(&addForce, "force", false, "overwrite an existing provider")
 	addCmd.Flags().BoolVar(&addNoVerify, "no-verify", false, "skip the connectivity check")

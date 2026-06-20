@@ -18,32 +18,80 @@ import (
 // config.toml layout changes incompatibly, and add a matching entry to
 // schemaMigrations. An absent `version` field is treated as version 0 (the
 // pre-versioned, bash-era layout).
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
+
+// Well-known environment variable names that get special handling. Everything
+// else in a provider is treated as an opaque passthrough variable.
+const (
+	// AuthTokenKey holds the API key. It is the one secret in a provider: it is
+	// collected via hidden input, masked in list/status, and registered with
+	// Claude Code. Its presence is also what selects API-key mode over OAuth.
+	AuthTokenKey = "ANTHROPIC_AUTH_TOKEN"
+	// BaseURLKey is the API endpoint, used by the connectivity probe.
+	BaseURLKey = "ANTHROPIC_BASE_URL"
+	// ProviderVar records the active provider name in the injected environment.
+	ProviderVar = "CLAUDE_SWITCH_PROVIDER"
+)
 
 // Config is the top-level configuration document.
 type Config struct {
 	Version         int                 `toml:"version"`
 	DefaultProvider string              `toml:"default_provider"`
-	Defaults        Defaults            `toml:"defaults"`
-	Providers       map[string]Provider `toml:"providers"`
+	Defaults        map[string]string   `toml:"defaults,omitempty"`
+	Providers       map[string]Provider `toml:"providers,omitempty"`
 }
 
-// Defaults holds preferences applied to every provider before its own values.
-type Defaults struct {
-	Env map[string]string `toml:"env,omitempty"`
+// Provider is a single backend definition: a flat set of environment variables
+// to export, keyed by their real variable names. There are no typed fields —
+// base_url, model, timeouts, and any passthrough var are all just entries here.
+// Built-in defaults live in the project's presets; a user's config only needs
+// to hold the secret (AuthTokenKey) plus any overrides.
+type Provider map[string]string
+
+// AuthToken returns the provider's API key (empty if it relies on OAuth).
+func (p Provider) AuthToken() string { return p[AuthTokenKey] }
+
+// BaseURL returns the provider's configured endpoint (empty if it comes from a
+// preset instead).
+func (p Provider) BaseURL() string { return p[BaseURLKey] }
+
+// presetLookup resolves a provider's built-in preset variables. It is injected
+// by the cmd layer (via SetPresetLookup) rather than imported, so this package
+// stays decoupled from the embedded presets and is easy to test. When unset
+// (e.g. in unit tests), preset-based minimization is skipped.
+var presetLookup func(name string) (map[string]string, bool)
+
+// SetPresetLookup wires the preset resolver used to minimize stored configs.
+func SetPresetLookup(f func(name string) (map[string]string, bool)) {
+	presetLookup = f
 }
 
-// Provider is a single backend definition. Typed fields map to well-known
-// Claude Code environment variables; Env carries provider-specific passthrough.
-type Provider struct {
-	BaseURL        string            `toml:"base_url"`
-	AuthToken      string            `toml:"auth_token,omitempty"`
-	Model          string            `toml:"model,omitempty"`
-	SmallFastModel string            `toml:"small_fast_model,omitempty"`
-	SonnetModel    string            `toml:"sonnet_model,omitempty"`
-	OpusModel      string            `toml:"opus_model,omitempty"`
-	HaikuModel     string            `toml:"haiku_model,omitempty"`
-	Env            map[string]string `toml:"env,omitempty"`
+// minimizeProviders removes any provider variable whose stored value already
+// equals the built-in preset default (the secret is always kept). It returns
+// whether anything was removed. A genuine override — a value that differs from
+// the preset — is preserved.
+func minimizeProviders(c *Config) bool {
+	if presetLookup == nil {
+		return false
+	}
+	removed := false
+	for name, p := range c.Providers {
+		preset, ok := presetLookup(name)
+		if !ok {
+			continue
+		}
+		for k, v := range p {
+			if k == AuthTokenKey {
+				continue
+			}
+			if pv, ok := preset[k]; ok && pv == v {
+				delete(p, k)
+				removed = true
+			}
+		}
+		c.Providers[name] = p
+	}
+	return removed
 }
 
 // ConfigDir returns the directory holding config.toml, honoring XDG_CONFIG_HOME.
@@ -111,9 +159,16 @@ func Load() (*Config, error) {
 	if c.DefaultProvider == "" {
 		c.DefaultProvider = "claude"
 	}
-	// Persist an in-place upgrade once, keeping a one-time backup of the original.
-	if changed {
-		_ = os.WriteFile(path+".bak", data, 0o600)
+	// Drop any stored value that merely duplicates the built-in preset default,
+	// so configs shrink to just the secret plus genuine overrides and track
+	// future preset changes automatically.
+	minimized := minimizeProviders(&c)
+	// Persist an in-place change once, keeping a one-time backup of the original
+	// whenever the on-disk schema was upgraded.
+	if changed || minimized {
+		if changed {
+			_ = os.WriteFile(path+".bak", data, 0o600)
+		}
 		if err := Save(&c); err != nil {
 			return nil, err
 		}
