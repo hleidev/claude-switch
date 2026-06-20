@@ -1,14 +1,18 @@
 # claude-switch (`cs`)
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+
 [中文](README.zh.md)
 
-Per-terminal Claude Code provider switcher. Switch between Claude.ai (OAuth) and
-third-party API providers (MiniMax, DeepSeek, …) with one command — **each
-terminal window is independent**, which native `settings.json` cannot do.
+Switch Claude Code between Claude.ai (OAuth) and third-party API providers per
+terminal, with one command. Each terminal window is independent, so you can run
+one provider in a shell and another in the next. Native `settings.json` can't do
+this; it's global.
 
-The PATH binary is `claude-switch`; you drive it through the short `cs` shell
-function that the installer adds (it exists because env injection must happen in
-your shell, not a child process).
+The PATH binary is `claude-switch`; you drive it through the `cs` shell function
+the installer adds. The function exists because env injection has to happen
+inside your shell, not a child process.
 
 ## How it works
 
@@ -20,6 +24,14 @@ Claude Code picks its backend from environment variables:
 `cs use <provider>` injects a provider's env into the current shell; `cs use
 claude` clears it and falls back to OAuth. Switching only affects **newly
 started** `claude` instances in that terminal.
+
+## Features
+
+- Switch one terminal without touching other windows or the global `settings.json`
+- Built-in presets for minimax, deepseek, glm, and anthropic: add a key and you're set
+- `cs use claude` falls back to your Claude.ai OAuth login
+- Keys live in a `0600` config file and never show up in `cs list` or `cs status`
+- Shell integration for zsh and bash is wired up by the installer
 
 ## Requirements
 
@@ -35,42 +47,25 @@ make install          # builds, installs to ~/.local/bin, wires up your rc file
 exec $SHELL           # or open a new terminal
 ```
 
-Override the location like any autotools-style project: `make install PREFIX=/usr/local`.
+Override the install prefix like any autotools-style project: `make install PREFIX=/usr/local`.
 
-## Updating
-
-Presets (built-in model names, base URLs, etc.) are embedded into the binary at
-**build time**, so updating means pulling and reinstalling — not editing a config
-file:
+## Quick start
 
 ```bash
-cd claude-switch
-git pull
-make install          # rebuilds, overwrites ~/.local/bin/claude-switch
-cs version            # confirm the version
+cs add                # pick a provider, paste your key
+cs use glm            # this terminal now routes to GLM
+cs list               # ✓ default, ● this terminal
+claude                # ...uses the selected provider
 ```
 
-Providers you already `cs add`ed do not follow preset changes (their model names
-are written into your config). To refresh one to the latest preset defaults, run
-`cs add <provider> --force` (re-enter the key) or edit it with `cs edit`.
+`cs use claude` switches back to OAuth. The choice sticks for new `claude`
+processes started in this terminal; other terminals are unaffected.
 
-## Migrating from the old bash version
-
-If you used the previous unversioned bash `cs` (data in `~/.claude-switch/`):
-
-```bash
-cs migrate
-```
-
-It imports your providers and default, re-registers your keys with Claude Code,
-and offers to remove the old shell integration. Your old `~/.claude-switch/` is
-left untouched until you delete it yourself.
-
-## Usage
+## Commands
 
 | Command | Effect |
 |---|---|
-| `cs add [provider]` | Add a provider (interactive picker + hidden key entry; `--key-stdin` to script) |
+| `cs add [provider]` | Add a provider (interactive picker + hidden key entry; `--key-stdin` to script, `--base-url` for custom) |
 | `cs use <provider>` | Switch this terminal to a provider |
 | `cs use claude` | Reset this terminal to Claude.ai (OAuth) |
 | `cs default [provider]` | Show / set the provider new terminals load |
@@ -83,12 +78,12 @@ left untouched until you delete it yourself.
 | `cs version` | Print the version |
 
 Built-in presets: `minimax`, `deepseek`, `glm`, `anthropic`. Anything else is a
-`custom…` provider you supply a base URL for.
+`custom…` provider you supply a base URL for (`--base-url`).
 
 ## Configuration
 
 A single file at `${XDG_CONFIG_HOME:-~/.config}/claude-switch/config.toml`
-(`0600`). **A provider is just a flat table of environment variables**, keyed by
+(`0600`). A provider is just a flat table of environment variables, keyed by
 their real names. Model names, timeouts, and other defaults for built-in presets
 are maintained by the project (see `internal/presets/data/presets.toml`), so a
 preset provider's config usually only needs the secret:
@@ -105,8 +100,38 @@ ANTHROPIC_AUTH_TOKEN = "sk-..."
 
 `cs use` exports the merge of `defaults → preset → your overrides`. A custom
 (non-preset) provider has no template, so it must supply its own
-`ANTHROPIC_BASE_URL`. Edit the file directly with `cs edit`, or per-variable with
-`cs set`. Keys are never printed by `cs list` / `cs status`.
+`ANTHROPIC_BASE_URL`. Edit the file with `cs edit`. Keys are never printed by
+`cs list` / `cs status`.
+
+## Updating
+
+Presets (built-in model names, base URLs, etc.) are embedded into the binary at
+build time, so updating means pulling and reinstalling, not editing a config
+file:
+
+```bash
+cd claude-switch
+git pull
+make install          # rebuilds, overwrites ~/.local/bin/claude-switch
+cs version            # confirm the version
+```
+
+Providers you already `cs add`ed do not follow preset changes — their model
+names are written into your config. To refresh one to the latest preset
+defaults, run `cs add <provider> --force` (re-enter the key) or edit it with
+`cs edit`.
+
+## Migrating from the old bash version
+
+If you used the previous unversioned bash `cs` (data in `~/.claude-switch/`):
+
+```bash
+cs migrate
+```
+
+It imports your providers and default, re-registers your keys with Claude Code,
+and offers to remove the old shell integration. Your old `~/.claude-switch/` is
+left untouched until you delete it yourself.
 
 ## Uninstall
 
