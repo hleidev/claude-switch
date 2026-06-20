@@ -5,7 +5,7 @@
 
 [English](README.md)
 
-逐终端切换 Claude Code 的后端。一条命令，在 Claude.ai（OAuth）与第三方 API
+为每个终端单独切换 Claude Code 的后端。一条命令，在 Claude.ai（OAuth）与第三方 API
 （MiniMax、DeepSeek、GLM 等）之间切换；每个终端窗口互相独立，一个终端的切换不会
 影响其它终端。原生 `settings.json` 是全局的，做不到这一点。
 
@@ -24,7 +24,7 @@ Claude Code 根据环境变量选择后端：
 
 ## 功能
 
-- 单终端切换，不影响其它窗口，也不改动全局 `settings.json`
+- 每个终端单独切换，不影响其它窗口，也不改动全局 `settings.json`
 - 内置预设：minimax、deepseek、glm、anthropic，填入密钥即可使用
 - `cs use claude` 回落到 Claude.ai 的 OAuth 登录
 - 密钥存放在 `0600` 权限的配置文件中，`cs list` / `cs status` 不会打印
