@@ -42,7 +42,7 @@ var shellenvCmd = &cobra.Command{
 		// there is nothing to emit on stdout here.
 		if name == "" || name == "claude" {
 			if shellenvAnnounce {
-				fmt.Fprintln(errOut, "已切换到 claude (OAuth)")
+				fmt.Fprintln(errOut, "✓ switched to claude (OAuth)")
 			}
 			return nil
 		}
@@ -67,9 +67,9 @@ var shellenvCmd = &cobra.Command{
 		fmt.Fprint(out, code)
 		if shellenvAnnounce {
 			if p.AuthToken() == "" {
-				fmt.Fprintf(errOut, "⚠ %s 未设置 auth_token；claude 将回落到 OAuth（运行：cs edit %s）\n", name, name)
+				fmt.Fprintf(errOut, "⚠ %s has no auth_token; claude will fall back to OAuth (run: cs edit %s)\n", name, name)
 			}
-			fmt.Fprintf(errOut, "✓ 已切换到 %s\n", name)
+			fmt.Fprintf(errOut, "✓ switched to %s\n", name)
 		}
 		return nil
 	},

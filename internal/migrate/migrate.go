@@ -79,7 +79,8 @@ func ToProvider(base config.Provider, vars map[string]string) config.Provider {
 
 // ParseExports extracts KEY=VALUE pairs from `export KEY=VALUE` shell lines,
 // stripping surrounding single or double quotes. Comments and blank lines are
-// ignored. This is best-effort, matching the spec's "尽力导入" guarantee.
+// ignored. Parsing is best-effort by design: a malformed line is skipped
+// rather than failing the whole import.
 func ParseExports(content string) map[string]string {
 	out := map[string]string{}
 	for _, raw := range strings.Split(content, "\n") {
