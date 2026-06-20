@@ -1,13 +1,30 @@
 package cmd
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hleidev/claude-switch/internal/claudejson"
 	"github.com/hleidev/claude-switch/internal/config"
 	"github.com/hleidev/claude-switch/internal/presets"
 )
+
+// registerKeyBestEffort registers a key into ~/.claude.json, warning (not
+// failing) on error. It returns whether the file was actually updated.
+func registerKeyBestEffort(cmd *cobra.Command, key string) bool {
+	path, err := claudejson.DefaultPath()
+	if err != nil {
+		return false
+	}
+	registered, err := claudejson.RegisterKey(path, key)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ could not register key in ~/.claude.json: %v\n", err)
+		return false
+	}
+	return registered
+}
 
 // resolvedBaseURL returns the effective ANTHROPIC_BASE_URL for a provider,
 // preferring the user's own value, then the built-in preset.

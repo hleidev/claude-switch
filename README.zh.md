@@ -70,8 +70,6 @@ shell 集成。旧的 `~/.claude-switch/` 会原样保留,由你自行删除。
 | `cs use <provider>` | 把当前终端切到某服务商 |
 | `cs use claude` | 当前终端重置回 Claude.ai(OAuth) |
 | `cs default [provider]` | 查看 / 设置新终端默认加载的服务商 |
-| `cs set <p> <变量> [值]` | 改单个环境变量,变量名用真名如 `ANTHROPIC_MODEL`(`cs set <p> key` 隐藏输入 API key) |
-| `cs unset <p> <变量>` | 清除单个环境变量 |
 | `cs list` | 列出服务商(✓ 默认,● 当前终端) |
 | `cs status` | 当前终端的服务商与配置摘要 |
 | `cs edit [provider]` | 在 `$EDITOR` 打开整个配置 |

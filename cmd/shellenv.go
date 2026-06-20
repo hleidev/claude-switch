@@ -67,7 +67,7 @@ var shellenvCmd = &cobra.Command{
 		fmt.Fprint(out, code)
 		if shellenvAnnounce {
 			if p.AuthToken() == "" {
-				fmt.Fprintf(errOut, "⚠ %s 未设置 auth_token；claude 将回落到 OAuth（运行：cs set %s key）\n", name, name)
+				fmt.Fprintf(errOut, "⚠ %s 未设置 auth_token；claude 将回落到 OAuth（运行：cs edit %s）\n", name, name)
 			}
 			fmt.Fprintf(errOut, "✓ 已切换到 %s\n", name)
 		}

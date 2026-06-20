@@ -35,7 +35,7 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 		return fmt.Errorf("claude is the built-in OAuth fallback; it is not a configurable provider")
 	}
 	if _, exists := cfg.Providers[opts.Name]; exists && !opts.Force {
-		return fmt.Errorf("provider %q already exists (edit it with `cs set`/`cs edit`, or pass --force)", opts.Name)
+		return fmt.Errorf("provider %q already exists (edit it with `cs edit`, or pass --force)", opts.Name)
 	}
 	_, isPreset := presets.Lookup(opts.Name)
 	if !isPreset && opts.BaseURL == "" {

@@ -74,8 +74,6 @@ left untouched until you delete it yourself.
 | `cs use <provider>` | Switch this terminal to a provider |
 | `cs use claude` | Reset this terminal to Claude.ai (OAuth) |
 | `cs default [provider]` | Show / set the provider new terminals load |
-| `cs set <p> <VAR> [value]` | Set one variable by its real name, e.g. `ANTHROPIC_MODEL` (`cs set <p> key` prompts hidden for the API key) |
-| `cs unset <p> <VAR>` | Clear one variable |
 | `cs list` | List providers (✓ default, ● this terminal) |
 | `cs status` | Current terminal's provider and config summary |
 | `cs edit [provider]` | Open the whole config in `$EDITOR` |
