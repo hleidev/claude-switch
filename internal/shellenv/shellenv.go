@@ -42,6 +42,8 @@ func ForProvider(c *config.Config, name string, preset map[string]string) (strin
 		b.WriteString("export " + kv.Key + "=" + shellQuote(kv.Value) + "\n")
 		names = append(names, kv.Key)
 	}
+	b.WriteString("export ENABLE_CLAUDEAI_MCP_SERVERS=false\n")
+	names = append(names, "ENABLE_CLAUDEAI_MCP_SERVERS")
 	names = append(names, managedVar)
 	b.WriteString("export " + managedVar + "=" + shellQuote(strings.Join(names, " ")) + "\n")
 	return b.String(), nil
