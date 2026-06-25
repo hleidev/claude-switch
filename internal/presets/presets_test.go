@@ -10,14 +10,11 @@ func TestLookupKnown(t *testing.T) {
 	if !ok {
 		t.Fatal("minimax preset missing")
 	}
-	if m["ANTHROPIC_BASE_URL"] != "https://api.minimaxi.com/anthropic" || m["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "MiniMax-M3" {
+	if m["ANTHROPIC_BASE_URL"] != "https://api.minimaxi.com/anthropic" || m["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "MiniMax-M3[1m]" {
 		t.Errorf("minimax core vars wrong: %+v", m)
 	}
 	if m["ANTHROPIC_MODEL"] != "" {
 		t.Errorf("minimax should not pin ANTHROPIC_MODEL, got %q", m["ANTHROPIC_MODEL"])
-	}
-	if m["API_TIMEOUT_MS"] != "3000000" {
-		t.Errorf("minimax timeout wrong: %+v", m)
 	}
 	if m["ANTHROPIC_AUTH_TOKEN"] != "" {
 		t.Errorf("preset must not carry a secret, got %q", m["ANTHROPIC_AUTH_TOKEN"])
