@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: claude-switch
+    main: .
+    binary: claude-switch
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew Cask — distributes the pre-built macOS binary. GoReleaser commits the
+# generated cask to the hleidev/homebrew-claude-switch tap on every tagged release.
+homebrew_casks:
+  - name: claude-switch
+    repository:
+      owner: hleidev
+      name: homebrew-claude-switch
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/hleidev/claude-switch"
+    description: "Switch Claude Code's backend per terminal — one command, no global config"
+    caveats: |
+      `cs` is a shell function, not a binary. To enable it in the current terminal:
+        source ~/.zshrc          # or ~/.bashrc / ~/.bash_profile
+      To install the integration into your rc file (idempotent):
+        claude-switch setup

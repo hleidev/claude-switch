@@ -43,14 +43,18 @@ started** `claude` instances in that terminal.
 
 ## Installation
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS)
 
 ```bash
 brew tap hleidev/claude-switch
-brew install claude-switch
+brew install --cask claude-switch
 claude-switch setup   # wires the `cs` shell function into your rc file
 exec $SHELL
 ```
+
+> Linux: Homebrew casks are macOS-only. Download the binary for your arch from the
+> [latest release](https://github.com/hleidev/claude-switch/releases/latest), or
+> build [from source](#from-source).
 
 ### From source
 
@@ -129,7 +133,7 @@ file.
 ### Homebrew
 
 ```bash
-brew update && brew upgrade claude-switch
+brew update && brew upgrade --cask claude-switch
 cs version            # confirm the new version
 ```
 
@@ -164,7 +168,7 @@ left untouched until you delete it yourself.
 ### Homebrew
 
 ```bash
-brew uninstall claude-switch
+brew uninstall --cask claude-switch
 cs uninstall          # removes shell integration; asks about config
 ```
 
@@ -213,7 +217,7 @@ make vet              # go vet ./...
 | `internal/migrate` | One-shot importer for the legacy `~/.claude-switch/` layout |
 | `internal/presets` | Built-in provider templates (model names, base URLs) |
 | `internal/shellenv` | Env-var merge + `init zsh` / `init bash` snippets |
-| `Formula/` | Homebrew formula for the [hleidev/claude-switch](https://github.com/hleidev/homebrew-claude-switch) tap |
+| `.goreleaser.yaml` | GoReleaser config; a tagged push builds binaries and updates the [Homebrew tap](https://github.com/hleidev/homebrew-claude-switch) |
 | `Makefile` | `build` / `test` / `install` / `uninstall` / `fmt` / `vet` / `clean` |
 
 ## License
