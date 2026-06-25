@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 
-[Install](#install) · [Quick start](#quick-start) · [Commands](#commands) · [中文](README.zh.md)
+[Install](#installation) · [Quick start](#quick-start) · [Commands](#commands) · [中文](README.zh.md)
 
 </div>
 
@@ -41,12 +41,21 @@ started** `claude` instances in that terminal.
 - Keys live in a `0600` config file and never show up in `cs list` or `cs status`
 - The installer sets up shell integration for zsh and bash
 
-## Requirements
+## Installation
 
-- **Go** (to build) — `brew install go`
-- **zsh or bash** — interactive shell integration
+### Homebrew (macOS / Linux)
 
-## Install
+```bash
+brew tap hleidev/claude-switch
+brew install claude-switch
+claude-switch setup   # wires the `cs` shell function into your rc file
+exec $SHELL
+```
+
+### From source
+
+Requires Go 1.26+ and a POSIX shell (zsh or bash). See
+[Development](#development) for the full build/test workflow.
 
 ```bash
 git clone https://github.com/hleidev/claude-switch.git
@@ -114,14 +123,23 @@ ANTHROPIC_AUTH_TOKEN = "sk-..."
 ## Updating
 
 Presets (built-in model names, base URLs, etc.) are embedded into the binary at
-build time, so updating means pulling and reinstalling, not editing a config
-file:
+build time, so updating means reinstalling the binary, not editing a config
+file.
+
+### Homebrew
+
+```bash
+brew update && brew upgrade claude-switch
+cs version            # confirm the new version
+```
+
+### From source
 
 ```bash
 cd claude-switch
 git pull
 make install          # rebuilds, overwrites ~/.local/bin/claude-switch
-cs version            # confirm the version
+cs version            # confirm the new version
 ```
 
 Providers you've already added with `cs add` don't follow preset changes — their
@@ -143,17 +161,60 @@ left untouched until you delete it yourself.
 
 ## Uninstall
 
+### Homebrew
+
+```bash
+brew uninstall claude-switch
+cs uninstall          # removes shell integration; asks about config
+```
+
+### From source
+
 ```bash
 make uninstall        # removes shell integration (asks about config) + the binary
 ```
 
 ## Development
 
+For contributors — if you just want to use `cs`, the
+[Installation](#installation) section is all you need.
+
+### Build
+
 ```bash
 make build            # -> bin/claude-switch
-make test             # go test ./...
-make fmt vet
 ```
+
+The Makefile injects the version via `-ldflags "-X main.version=$(VERSION)"`,
+where `VERSION` is `git describe --tags --always --dirty` (so a dev build prints
+the current commit SHA; a tagged build prints the tag).
+
+### Test
+
+```bash
+make test             # go test ./...
+```
+
+### Format & vet
+
+```bash
+make fmt              # gofmt -w .
+make vet              # go vet ./...
+```
+
+### Project layout
+
+| Path | Purpose |
+|---|---|
+| `main.go` | Entry point; reads `main.version` and hands off to `cmd` |
+| `cmd/` | Cobra subcommand implementations (`add`, `use`, `setup`, …) |
+| `internal/claudejson` | Reads/writes `~/.claude/.credentials.json` for OAuth re-registration |
+| `internal/config` | Parses `config.toml`, providers, defaults |
+| `internal/migrate` | One-shot importer for the legacy `~/.claude-switch/` layout |
+| `internal/presets` | Built-in provider templates (model names, base URLs) |
+| `internal/shellenv` | Env-var merge + `init zsh` / `init bash` snippets |
+| `Formula/` | Homebrew formula for the [hleidev/claude-switch](https://github.com/hleidev/homebrew-claude-switch) tap |
+| `Makefile` | `build` / `test` / `install` / `uninstall` / `fmt` / `vet` / `clean` |
 
 ## License
 
