@@ -1,6 +1,7 @@
 .env
 /bin/
 /dist/
+.DS_Store
 
 # Internal design notes (kept locally, not published)
 /docs/superpowers/
