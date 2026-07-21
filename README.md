@@ -137,6 +137,15 @@ brew update && brew upgrade --cask claude-switch
 cs version            # confirm the new version
 ```
 
+Coming from 0.1.x, the binary was renamed `claude-switch` → `cs`, so terminals
+opened before the upgrade still hold the old shell function and will report
+`command not found: claude-switch`. Fix it once with:
+
+```bash
+command cs setup      # bypasses the stale function; rewrites your rc line
+exec $SHELL
+```
+
 ### From source
 
 ```bash
@@ -168,9 +177,12 @@ left untouched until you delete it yourself.
 ### Homebrew
 
 ```bash
-brew uninstall --cask claude-switch
 cs uninstall          # removes shell integration; asks about config
+brew uninstall --cask claude-switch
 ```
+
+Order matters: `cs uninstall` needs the binary, so run it first. Removing the
+cask first strands the integration line in your rc file.
 
 ### From source
 
