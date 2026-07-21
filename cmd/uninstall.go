@@ -83,7 +83,7 @@ func stripIntegration(rc string) (bool, error) {
 			continue
 		case inBlock:
 			continue
-		case strings.Contains(line, setupMarker), line == "# claude-switch":
+		case strings.Contains(line, setupMarker), strings.Contains(line, legacySetupMarker), line == "# claude-switch":
 			changed = true
 			continue
 		}

@@ -17,10 +17,10 @@ func init() {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "claude-switch",
+	Use:   "cs",
 	Short: "Per-terminal Claude Code provider switcher",
-	Long: "claude-switch (cs) switches Claude Code between Claude.ai (OAuth) and\n" +
-		"third-party API providers per terminal, via shell environment injection.",
+	Long: "cs switches Claude Code between Claude.ai (OAuth) and third-party API\n" +
+		"providers per terminal, via shell environment injection.",
 	SilenceUsage: true,
 }
 

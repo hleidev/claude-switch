@@ -160,12 +160,12 @@ func fixLegacyIntegration(cmd *cobra.Command, home string) {
 	}
 
 	if !isInteractive() {
-		fmt.Fprintln(out, "Remove these and run `claude-switch setup` to install the new integration.")
+		fmt.Fprintln(out, "Remove these and run `cs setup` to install the new integration.")
 		return
 	}
 	ok, err := confirm("Remove the legacy integration and install the new one now?")
 	if err != nil || !ok {
-		fmt.Fprintln(out, "Left as-is. Remove them and run `claude-switch setup` when ready.")
+		fmt.Fprintln(out, "Left as-is. Remove them and run `cs setup` when ready.")
 		return
 	}
 	if hasOldBin {
@@ -191,12 +191,10 @@ func fixLegacyIntegration(cmd *cobra.Command, home string) {
 	}
 }
 
-// isLegacyActivation reports whether an rc line is the bash-era activation: it
-// references the old ~/.local/bin/cs symlink or evals `cs init`, but is NOT the
-// new `command claude-switch init` line (which must be preserved). The PATH
-// export for ~/.local/bin is intentionally not matched — the new tool needs it.
+// isLegacyActivation reports whether an rc line is the bash-era activation.
+// Current and pre-0.2 lines are excluded first — both would match below.
 func isLegacyActivation(line string) bool {
-	if strings.Contains(line, "claude-switch") {
+	if strings.Contains(line, setupMarker) || strings.Contains(line, legacySetupMarker) {
 		return false
 	}
 	return strings.Contains(line, ".local/bin/cs") ||

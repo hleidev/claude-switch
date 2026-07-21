@@ -8,7 +8,7 @@ before:
 builds:
   - id: claude-switch
     main: .
-    binary: claude-switch
+    binary: cs
     env:
       - CGO_ENABLED=0
     goos:
@@ -47,19 +47,18 @@ homebrew_casks:
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/hleidev/claude-switch"
     description: "Switch Claude Code's backend per terminal — one command, no global config"
-    # The binary is neither signed nor notarized, so macOS quarantines it on
-    # download and refuses to run it. Strip the flag after staging.
+    # Unsigned binary: macOS quarantines it on download. Strip the flag.
     hooks:
       post:
         install: |
           if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/claude-switch"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cs"]
           end
     caveats: |
-      `cs` is a shell function, not a binary — two more steps are required,
-      otherwise `cs` will report "command not found":
+      One more step — `cs use` needs shell integration to change the current
+      terminal's environment:
 
-        1. claude-switch setup   # writes the integration into your rc file
-        2. exec $SHELL           # or just open a new terminal
+        1. cs setup      # writes the integration into your rc file
+        2. exec $SHELL   # or just open a new terminal
 
-      Step 1 is idempotent. Run `claude-switch doctor` if `cs` still is not found.
+      Step 1 is idempotent. Run `cs doctor` if anything looks off.

@@ -42,14 +42,12 @@ func shellIntegration(shell string) (string, error) {
 	case "zsh":
 		f.split = "${=_CS_MANAGED_VARS}"
 		f.completion = `if command -v compdef >/dev/null 2>&1; then
-  source <(command claude-switch completion zsh) 2>/dev/null || true
-  compdef _claude-switch cs 2>/dev/null || true
+  source <(command cs completion zsh) 2>/dev/null || true
 fi`
 	case "bash":
 		f.split = "$_CS_MANAGED_VARS"
 		f.completion = `if type complete >/dev/null 2>&1; then
-  source <(command claude-switch completion bash) 2>/dev/null || true
-  complete -F __start_claude-switch cs 2>/dev/null || true
+  source <(command cs completion bash) 2>/dev/null || true
 fi`
 	default:
 		return "", fmt.Errorf("unsupported shell %q (supported: zsh, bash)", shell)
@@ -74,22 +72,22 @@ cs() {
       return 2
     fi
     _cs_unset_managed
-    eval "$(command claude-switch __shellenv --announce "$@")"
+    eval "$(command cs __shellenv --announce "$@")"
   else
-    command claude-switch "$@"
+    command cs "$@"
   fi
 }
 # auto-load the default provider in new shells (must never break startup)
 _cs_unset_managed
-eval "$(command claude-switch __shellenv 2>/dev/null)" 2>/dev/null || true
-# completion (bound to the cs function as well as the binary)
+eval "$(command cs __shellenv 2>/dev/null)" 2>/dev/null || true
+# completion (cobra binds to the name; the function shadows the binary)
 %s
 # <<< claude-switch <<<
 `
 
 var initCmd = &cobra.Command{
 	Use:       "init [zsh|bash]",
-	Short:     "Print the integration snippet `claude-switch setup` installs (for manual setup)",
+	Short:     "Print the integration snippet `cs setup` installs (for manual setup)",
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"zsh", "bash"},
 	RunE: func(cmd *cobra.Command, args []string) error {

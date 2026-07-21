@@ -18,9 +18,9 @@ terminal, with one command. Each terminal window is independent, so you can run
 one provider in a shell and another in the next. Native `settings.json` can't do
 this; it's global.
 
-The PATH binary is `claude-switch`; you drive it through the `cs` shell function
-the installer adds. The function exists because env injection has to happen
-inside your shell, not a child process.
+Everything is `cs`. `cs setup` adds a shell function that shadows the binary of
+the same name — `cs use` needs to inject env into your shell, which a child
+process cannot do; every other subcommand forwards straight to the binary.
 
 ## How it works
 
@@ -48,7 +48,7 @@ started** `claude` instances in that terminal.
 ```bash
 brew tap hleidev/claude-switch
 brew install --cask claude-switch
-claude-switch setup   # wires the `cs` shell function into your rc file
+cs setup              # wires the `cs` shell function into your rc file
 exec $SHELL
 ```
 
@@ -142,7 +142,7 @@ cs version            # confirm the new version
 ```bash
 cd claude-switch
 git pull
-make install          # rebuilds, overwrites ~/.local/bin/claude-switch
+make install          # rebuilds, overwrites ~/.local/bin/cs
 cs version            # confirm the new version
 ```
 
@@ -186,7 +186,7 @@ For contributors — if you just want to use `cs`, the
 ### Build
 
 ```bash
-make build            # -> bin/claude-switch
+make build            # -> bin/cs
 ```
 
 The Makefile injects the version via `-ldflags "-X main.version=$(VERSION)"`,

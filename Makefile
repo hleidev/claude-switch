@@ -7,7 +7,7 @@
 # Override the install prefix like any autotools-style project:
 #   make install PREFIX=/usr/local
 
-BINARY  := claude-switch
+BINARY  := cs
 PREFIX  ?= $(HOME)/.local
 BINDIR  := $(PREFIX)/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
