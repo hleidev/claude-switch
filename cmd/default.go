@@ -12,7 +12,7 @@ var defaultCmd = &cobra.Command{
 	Use:               "default [provider]",
 	Short:             "Show or set the provider loaded in new terminals",
 	Args:              cobra.MaximumNArgs(1),
-	ValidArgsFunction: providerNames,
+	ValidArgsFunction: providerNamesWithClaude,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {

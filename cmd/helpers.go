@@ -53,8 +53,18 @@ func sortedNames(cfg *config.Config) []string {
 // providerNames is the cobra completion callback for a provider-name argument.
 func providerNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, err := config.Load()
-	if err != nil {
+	// These commands all take at most one provider; stop offering after it.
+	if err != nil || len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	return sortedNames(cfg), cobra.ShellCompDirectiveNoFileComp
+}
+
+// providerNamesWithClaude adds the built-in "claude" for commands that accept it.
+func providerNamesWithClaude(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	names, directive := providerNames(cmd, args, toComplete)
+	if names == nil {
+		return nil, directive
+	}
+	return append(names, "claude"), directive
 }
