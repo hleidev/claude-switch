@@ -89,7 +89,7 @@ eval "$(command cs __shellenv 2>/dev/null)" 2>/dev/null || true
 
 var initCmd = &cobra.Command{
 	Use:       "init [zsh|bash]",
-	Short:     "Print the integration snippet `cs setup` installs (for manual setup)",
+	Short:     "Print the shell integration snippet",
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"zsh", "bash"},
 	RunE: func(cmd *cobra.Command, args []string) error {
