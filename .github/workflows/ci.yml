@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+
+      # Asserts the three things that have actually broken a release before.
+      - name: Verify generated cask and archive
+        run: |
+          set -euo pipefail
+          cask=dist/homebrew/Casks/claude-switch.rb
+
+          grep -q 'binary "cs"' "$cask" \
+            || { echo "::error::cask does not declare binary \"cs\""; exit 1; }
+
+          grep -q 'com.apple.quarantine' "$cask" \
+            || { echo "::error::cask is missing the quarantine postflight"; exit 1; }
+
+          tar tzf dist/claude-switch_*_darwin_arm64.tar.gz | grep -qx cs \
+            || { echo "::error::darwin archive does not contain a cs binary"; exit 1; }
+
+          echo "✓ cask and archive look correct"
