@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
@@ -31,10 +32,14 @@ var doctorCmd = &cobra.Command{
 			return nil
 		}
 
-		integrated := os.Getenv("_CS_MANAGED_VARS") != "" || os.Getenv("CLAUDE_SWITCH_PROVIDER") != ""
+		integrated := os.Getenv("_CS_SHELL") != ""
 		fmt.Fprintf(out, "%s shell integration active in this terminal\n", ok(integrated))
 		if !integrated {
-			fmt.Fprintln(out, "    run `cs setup`, then open a new terminal")
+			if rc, present := rcHasIntegration(); present {
+				fmt.Fprintf(out, "    installed in %s — open a new terminal, or run: source %s\n", rc, rc)
+			} else {
+				fmt.Fprintln(out, "    run `cs setup`, then open a new terminal")
+			}
 		}
 
 		defOK := cfg.DefaultProvider == "claude"
@@ -66,6 +71,20 @@ var doctorCmd = &cobra.Command{
 		fmt.Fprintln(out, "source rc files, so switching has no effect there — this is inherent to env injection.")
 		return nil
 	},
+}
+
+// rcHasIntegration picks the remedy: never installed vs. installed but unloaded.
+func rcHasIntegration() (rc string, present bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	rc = rcFileFor(detectShell(), home)
+	data, err := os.ReadFile(rc)
+	if err != nil {
+		return rc, false
+	}
+	return rc, strings.Contains(string(data), setupMarker)
 }
 
 // isWritable checks write permission without opening the user's data file for

@@ -52,13 +52,15 @@ fi`
 	default:
 		return "", fmt.Errorf("unsupported shell %q (supported: zsh, bash)", shell)
 	}
-	return fmt.Sprintf(integrationTemplate, f.split, f.completion), nil
+	return fmt.Sprintf(integrationTemplate, shell, f.split, f.completion), nil
 }
 
-// integrationTemplate is the shared snippet. The first %s is the per-shell
-// word-split expression; the second is the completion fragment. Bare `cs use`
-// (no provider) reports usage instead of silently switching to the default.
+// integrationTemplate is the shared snippet; the %s are shell name, word-split
+// expression, and completion fragment. Bare `cs use` (no provider) reports
+// usage instead of silently switching to the default.
 const integrationTemplate = `# >>> claude-switch >>>
+# set on load regardless of provider; the default "claude" injects nothing
+export _CS_SHELL=%s
 _cs_unset_managed() {
   [ -n "${_CS_MANAGED_VARS:-}" ] || return 0
   for v in %s; do unset "$v" 2>/dev/null; done
