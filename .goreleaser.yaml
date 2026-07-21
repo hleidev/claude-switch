@@ -56,7 +56,10 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/claude-switch"]
           end
     caveats: |
-      `cs` is a shell function, not a binary. To enable it in the current terminal:
-        source ~/.zshrc          # or ~/.bashrc / ~/.bash_profile
-      To install the integration into your rc file (idempotent):
-        claude-switch setup
+      `cs` is a shell function, not a binary — two more steps are required,
+      otherwise `cs` will report "command not found":
+
+        1. claude-switch setup   # writes the integration into your rc file
+        2. exec $SHELL           # or just open a new terminal
+
+      Step 1 is idempotent. Run `claude-switch doctor` if `cs` still is not found.
