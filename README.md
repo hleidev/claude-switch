@@ -137,8 +137,8 @@ brew update && brew upgrade --cask claude-switch
 cs version            # confirm the new version
 ```
 
-Coming from 0.1.x, the binary was renamed `claude-switch` → `cs`, so terminals
-opened before the upgrade still hold the old shell function and will report
+If you ever installed a pre-release build whose binary was named
+`claude-switch`, terminals still holding that old shell function will report
 `command not found: claude-switch`. Fix it once with:
 
 ```bash

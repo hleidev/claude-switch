@@ -130,8 +130,8 @@ brew update && brew upgrade --cask claude-switch
 cs version            # 确认新版本
 ```
 
-从 0.1.x 升级时，二进制已由 `claude-switch` 更名为 `cs`，升级前就开着的终端里仍
-是旧的 shell 函数，会报 `command not found: claude-switch`。一次性修好：
+如果你装过二进制名为 `claude-switch` 的预发布版本，仍持有旧 shell 函数的终端会报
+`command not found: claude-switch`。一次性修好：
 
 ```bash
 command cs setup      # 绕过失效的旧函数，改写 rc 里那一行
