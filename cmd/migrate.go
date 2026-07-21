@@ -160,12 +160,12 @@ func fixLegacyIntegration(cmd *cobra.Command, home string) {
 	}
 
 	if !isInteractive() {
-		fmt.Fprintln(out, "Remove these and run `cs setup` to install the new integration.")
+		fmt.Fprintln(out, "Remove these and run `claude-switch setup` to install the new integration.")
 		return
 	}
 	ok, err := confirm("Remove the legacy integration and install the new one now?")
 	if err != nil || !ok {
-		fmt.Fprintln(out, "Left as-is. Remove them and run `cs setup` when ready.")
+		fmt.Fprintln(out, "Left as-is. Remove them and run `claude-switch setup` when ready.")
 		return
 	}
 	if hasOldBin {

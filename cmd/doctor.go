@@ -34,7 +34,7 @@ var doctorCmd = &cobra.Command{
 		integrated := os.Getenv("_CS_MANAGED_VARS") != "" || os.Getenv("CLAUDE_SWITCH_PROVIDER") != ""
 		fmt.Fprintf(out, "%s shell integration active in this terminal\n", ok(integrated))
 		if !integrated {
-			fmt.Fprintln(out, "    run `cs setup`, then open a new terminal")
+			fmt.Fprintln(out, "    run `claude-switch setup`, then open a new terminal")
 		}
 
 		defOK := cfg.DefaultProvider == "claude"
