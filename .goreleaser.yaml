@@ -41,6 +41,8 @@ changelog:
 # generated cask to the hleidev/homebrew-claude-switch tap on every tagged release.
 homebrew_casks:
   - name: claude-switch
+    # Defaults to the cask name, which is not the binary name.
+    binaries: [cs]
     repository:
       owner: hleidev
       name: homebrew-claude-switch
