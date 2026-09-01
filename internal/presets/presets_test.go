@@ -24,7 +24,7 @@ func TestLookupKnown(t *testing.T) {
 	if !ok {
 		t.Fatal("deepseek preset missing")
 	}
-	if d["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "deepseek-v4-flash" || d["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
+	if d["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "deepseek-v4-flash[1m]" || d["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
 		t.Errorf("deepseek vars wrong: %+v", d)
 	}
 }
