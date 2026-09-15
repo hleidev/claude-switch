@@ -31,7 +31,9 @@ jobs:
 
       - uses: goreleaser/goreleaser-action@v7
         with:
-          version: "~> v2"
+          # Pinned to match release.yml: v2.18+ regenerates cask URLs with a
+          # spurious v prefix, mismatching our archive name_template.
+          version: "v2.17.0"
           args: release --snapshot --clean --skip=publish
 
       # Asserts the three things that have actually broken a release before.
@@ -48,5 +50,12 @@ jobs:
 
           tar tzf dist/claude-switch_*_darwin_arm64.tar.gz | grep -qx cs \
             || { echo "::error::darwin archive does not contain a cs binary"; exit 1; }
+
+          version=$(sed -n 's/^  version "\(.*\)"$/\1/p' "$cask")
+          for url in $(grep -o 'https://[^"]*\.tar\.gz' "$cask"); do
+            artifact=$(basename "$url" | sed "s/#{version}/$version/")
+            [ -f "dist/$artifact" ] \
+              || { echo "::error::cask url references an archive that was not built: $artifact"; exit 1; }
+          done
 
           echo "✓ cask and archive look correct"

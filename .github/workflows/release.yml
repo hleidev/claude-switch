@@ -25,7 +25,9 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
-          version: "~> v2"
+          # Pinned: v2.18+ regenerates cask URLs with a spurious v prefix,
+          # mismatching our archive name_template (404 on brew install).
+          version: "v2.17.0"
           args: release --clean
         env:
           # Creates the GitHub Release in THIS repo.
