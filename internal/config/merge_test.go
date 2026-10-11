@@ -96,3 +96,23 @@ func TestBuildEnvUnknownProvider(t *testing.T) {
 		t.Error("expected error for unknown provider")
 	}
 }
+
+func TestBuildEnvResolvesSecret(t *testing.T) {
+	t.Setenv("TEST_KEY_VAR", "sk-from-env")
+	c := &Config{Providers: map[string]Provider{
+		"test-env": {"ANTHROPIC_AUTH_TOKEN": "env:TEST_KEY_VAR"},
+	}}
+	got, err := c.BuildEnv("test-env", nil)
+	if err != nil {
+		t.Fatalf("BuildEnv: %v", err)
+	}
+	var token string
+	for _, v := range got {
+		if v.Key == "ANTHROPIC_AUTH_TOKEN" {
+			token = v.Value
+		}
+	}
+	if token != "sk-from-env" {
+		t.Errorf("ANTHROPIC_AUTH_TOKEN = %q, want sk-from-env", token)
+	}
+}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/hleidev/claude-switch/internal/claudejson"
 	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 var doctorCmd = &cobra.Command{
@@ -50,7 +51,19 @@ var doctorCmd = &cobra.Command{
 
 		for _, name := range sortedNames(cfg) {
 			p := cfg.Providers[name]
-			fmt.Fprintf(out, "%s provider %q has a key\n", ok(p.AuthToken() != ""), name)
+			raw := p.AuthTokenRaw()
+			kind := secret.DetectKind(raw)
+			keyVal := p.AuthToken()
+			switch kind {
+			case secret.KindKeychain:
+				fmt.Fprintf(out, "%s provider %q has key in macOS Keychain\n", ok(keyVal != ""), name)
+			case secret.KindEnv:
+				fmt.Fprintf(out, "%s provider %q has key via environment (%s)\n", ok(keyVal != ""), name, raw)
+			case secret.KindPlaintext:
+				fmt.Fprintf(out, "%s provider %q has a key (in config.toml)\n", ok(keyVal != ""), name)
+			default:
+				fmt.Fprintf(out, "%s provider %q has a key\n", ok(keyVal != ""), name)
+			}
 			fmt.Fprintf(out, "%s provider %q resolves a base_url\n", ok(resolvedBaseURL(cfg, name) != ""), name)
 		}
 

@@ -27,6 +27,13 @@ func TestLookupKnown(t *testing.T) {
 	if d["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "deepseek-v4-flash[1m]" || d["CLAUDE_CODE_EFFORT_LEVEL"] != "max" {
 		t.Errorf("deepseek vars wrong: %+v", d)
 	}
+	cp, ok := Lookup("coderplan")
+	if !ok {
+		t.Fatal("coderplan preset missing")
+	}
+	if cp["ANTHROPIC_BASE_URL"] != "https://api.coderplan.ai" {
+		t.Errorf("coderplan base url wrong: %+v", cp)
+	}
 }
 
 func TestLookupUnknown(t *testing.T) {
@@ -37,7 +44,7 @@ func TestLookupUnknown(t *testing.T) {
 
 func TestNamesSorted(t *testing.T) {
 	got := Names()
-	want := []string{"anthropic", "deepseek", "glm", "minimax"}
+	want := []string{"anthropic", "coderplan", "deepseek", "glm", "minimax"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Names = %v, want %v", got, want)
 	}

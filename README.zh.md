@@ -33,9 +33,9 @@ Claude Code 根据环境变量选择后端：
 ## 功能
 
 - 每个终端单独切换，不影响其它窗口，也不改动全局 `settings.json`
-- 内置预设：minimax、deepseek、glm、anthropic，填入密钥即可使用
+- 内置预设：coderplan、minimax、deepseek、glm、anthropic，填入密钥即可使用
 - `cs use claude` 回落到 Claude.ai 的 OAuth 登录
-- 密钥存放在 `0600` 权限的配置文件中，`cs list` / `cs status` 不会打印
+- 密钥优先加密保存在 macOS 钥匙串（Keychain）或 `0600` 权限配置文件中，支持 `env:` / `keychain:` 动态引用，`cs list` / `cs status` 不会打印明文
 - 安装器自动配置好 zsh 和 bash 的 shell 集成
 
 ## 安装
@@ -94,7 +94,7 @@ claude                # ...使用选中的服务商
 | `cs migrate` | 从旧版 `~/.claude-switch` 布局导入 |
 | `cs version` | 输出版本号 |
 
-内置预设：`minimax`、`deepseek`、`glm`、`anthropic`。其余均为 `custom…` 服务商，
+内置预设：`coderplan`、`minimax`、`deepseek`、`glm`、`anthropic`。其余均为 `custom…` 服务商，
 需自行提供 base URL（`--base-url`）。
 
 ## 配置
@@ -106,10 +106,10 @@ claude                # ...使用选中的服务商
 
 ```toml
 version = 2
-default_provider = "glm"
+default_provider = "coderplan"
 
-[providers.glm]
-ANTHROPIC_AUTH_TOKEN = "sk-..."
+[providers.coderplan]
+ANTHROPIC_AUTH_TOKEN = "keychain:coderplan" # 或直接明文 "sk-..."，或环境变量 "env:CODERPLAN_KEY"
 # 想覆盖预设的某个变量，就写上那一行（优先级高于预设）：
 # ANTHROPIC_MODEL = "glm-4.7"
 ```

@@ -36,9 +36,9 @@ started** `claude` instances in that terminal.
 ## Features
 
 - Switch one terminal without touching other windows or the global `settings.json`
-- Built-in presets for minimax, deepseek, glm, and anthropic: add a key and you're set
+- Built-in presets for coderplan, minimax, deepseek, glm, and anthropic: add a key and you're set
 - `cs use claude` falls back to your Claude.ai OAuth login
-- Keys live in a `0600` config file and never show up in `cs list` or `cs status`
+- Keys are encrypted in macOS Keychain (or `0600` config file), support `keychain:` / `env:` dynamic refs, and never show up in `cs list` or `cs status`
 - The installer sets up shell integration for zsh and bash
 
 ## Installation
@@ -98,7 +98,7 @@ processes started in this terminal; other terminals are unaffected.
 | `cs migrate` | Import from the legacy `~/.claude-switch` layout |
 | `cs version` | Print the version |
 
-Built-in presets: `minimax`, `deepseek`, `glm`, `anthropic`. Anything else is a
+Built-in presets: `coderplan`, `minimax`, `deepseek`, `glm`, `anthropic`. Anything else is a
 `custom…` provider that needs its own base URL (`--base-url`).
 
 ## Configuration
@@ -111,10 +111,10 @@ preset provider's config usually only needs the secret:
 
 ```toml
 version = 2
-default_provider = "glm"
+default_provider = "coderplan"
 
-[providers.glm]
-ANTHROPIC_AUTH_TOKEN = "sk-..."
+[providers.coderplan]
+ANTHROPIC_AUTH_TOKEN = "keychain:coderplan" # or plaintext "sk-...", or "env:CODERPLAN_KEY"
 # To override a preset variable, write that line (it wins over the preset):
 # ANTHROPIC_MODEL = "glm-4.7"
 ```

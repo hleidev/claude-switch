@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 var removeYes bool
@@ -40,6 +41,13 @@ var removeCmd = &cobra.Command{
 				fmt.Fprintln(cmd.ErrOrStderr(), "aborted")
 				return nil
 			}
+		}
+		p := cfg.Providers[name]
+		if raw := p.AuthTokenRaw(); secret.DetectKind(raw) == secret.KindKeychain {
+			service, account := secret.ParseKeychainRef(raw)
+			_ = secret.DefaultBackend.Delete(service, account)
+		} else {
+			_ = secret.DeleteFromKeychain(name)
 		}
 		delete(cfg.Providers, name)
 		if cfg.DefaultProvider == name {

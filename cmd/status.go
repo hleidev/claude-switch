@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 var statusCmd = &cobra.Command{
@@ -29,7 +30,16 @@ var statusCmd = &cobra.Command{
 			fmt.Fprintf(out, "  base_url:      %s\n", os.Getenv("ANTHROPIC_BASE_URL"))
 			fmt.Fprintf(out, "  model:         %s\n", os.Getenv("ANTHROPIC_MODEL"))
 			if os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
-				fmt.Fprintln(out, "  auth_token:    set (hidden)")
+				source := "hidden"
+				if p, ok := cfg.Providers[current]; ok {
+					switch secret.DetectKind(p.AuthTokenRaw()) {
+					case secret.KindKeychain:
+						source = "keychain"
+					case secret.KindEnv:
+						source = p.AuthTokenRaw()
+					}
+				}
+				fmt.Fprintf(out, "  auth_token:    set (%s)\n", source)
 			} else {
 				fmt.Fprintln(out, "  auth_token:    not set")
 			}

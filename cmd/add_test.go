@@ -65,3 +65,34 @@ func TestApplyAddDuplicateRequiresForce(t *testing.T) {
 		t.Errorf("force did not overwrite: %+v", cfg.Providers["minimax"])
 	}
 }
+
+func TestApplyAddCoderplanPreset(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{}}
+	if err := applyAdd(cfg, addOptions{Name: "coderplan", Key: "keychain:coderplan"}); err != nil {
+		t.Fatalf("applyAdd coderplan: %v", err)
+	}
+	p, ok := cfg.Providers["coderplan"]
+	if !ok {
+		t.Fatal("coderplan not added")
+	}
+	if p.AuthTokenRaw() != "keychain:coderplan" {
+		t.Errorf("AuthTokenRaw = %q, want keychain:coderplan", p.AuthTokenRaw())
+	}
+}
+
+func TestApplyAddKeychainAndEnvRefs(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{}}
+	if err := applyAdd(cfg, addOptions{Name: "deepseek", Key: "keychain:my-deepseek"}); err != nil {
+		t.Fatalf("applyAdd: %v", err)
+	}
+	if cfg.Providers["deepseek"].AuthTokenRaw() != "keychain:my-deepseek" {
+		t.Errorf("AuthTokenRaw = %q, want keychain:my-deepseek", cfg.Providers["deepseek"].AuthTokenRaw())
+	}
+
+	if err := applyAdd(cfg, addOptions{Name: "glm", Key: "env:GLM_KEY"}); err != nil {
+		t.Fatalf("applyAdd: %v", err)
+	}
+	if cfg.Providers["glm"].AuthTokenRaw() != "env:GLM_KEY" {
+		t.Errorf("AuthTokenRaw = %q, want env:GLM_KEY", cfg.Providers["glm"].AuthTokenRaw())
+	}
+}

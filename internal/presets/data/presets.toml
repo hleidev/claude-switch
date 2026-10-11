@@ -34,5 +34,8 @@ API_TIMEOUT_MS = "3000000"
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
 
+[coderplan]
+ANTHROPIC_BASE_URL = "https://api.coderplan.ai"
+
 [anthropic]
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"

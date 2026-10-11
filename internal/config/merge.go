@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"sort"
+
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 // EnvVar is a single environment-variable assignment.
@@ -42,6 +44,16 @@ func (c *Config) BuildEnv(name string, preset map[string]string) ([]EnvVar, erro
 	for k, v := range merged {
 		if k == ProviderVar || v == "" || !ValidEnvKey(k) {
 			continue
+		}
+		if secret.DetectKind(v) != secret.KindPlaintext {
+			resolved, err := secret.Resolve(v)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s for %s: %w", k, name, err)
+			}
+			merged[k] = resolved
+			if resolved == "" {
+				continue
+			}
 		}
 		keys = append(keys, k)
 	}

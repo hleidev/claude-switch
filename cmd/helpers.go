@@ -9,16 +9,21 @@ import (
 	"github.com/hleidev/claude-switch/internal/claudejson"
 	"github.com/hleidev/claude-switch/internal/config"
 	"github.com/hleidev/claude-switch/internal/presets"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 // registerKeyBestEffort registers a key into ~/.claude.json, warning (not
 // failing) on error. It returns whether the file was actually updated.
 func registerKeyBestEffort(cmd *cobra.Command, key string) bool {
+	realKey, err := secret.Resolve(key)
+	if err != nil || realKey == "" {
+		realKey = key
+	}
 	path, err := claudejson.DefaultPath()
 	if err != nil {
 		return false
 	}
-	registered, err := claudejson.RegisterKey(path, key)
+	registered, err := claudejson.RegisterKey(path, realKey)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ could not register key in ~/.claude.json: %v\n", err)
 		return false

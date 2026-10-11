@@ -14,6 +14,7 @@ func init() {
 	// Let config minimization resolve built-in presets without the config
 	// package importing them (keeps it decoupled from the embedded data).
 	config.SetPresetLookup(presets.Lookup)
+	config.SetAutoMigrateKeychain(true)
 }
 
 var rootCmd = &cobra.Command{

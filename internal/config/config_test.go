@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 // useTempConfig points config storage at an isolated temp dir for the test.
@@ -171,5 +174,78 @@ func TestConfigPathHonorsXDG(t *testing.T) {
 	want := filepath.Join(dir, "claude-switch", "config.toml")
 	if got != want {
 		t.Errorf("ConfigPath = %q, want %q", got, want)
+	}
+}
+
+type testMockKeychain struct {
+	items map[string]string
+}
+
+func (m *testMockKeychain) Get(s, a string) (string, error) {
+	if v, ok := m.items[s+"/"+a]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("not found")
+}
+
+func (m *testMockKeychain) Set(s, a, val string) error {
+	m.items[s+"/"+a] = val
+	return nil
+}
+
+func (m *testMockKeychain) Delete(s, a string) error {
+	delete(m.items, s+"/"+a)
+	return nil
+}
+
+func (m *testMockKeychain) IsAvailable() bool { return true }
+
+func TestMigrateSecretsToKeychain(t *testing.T) {
+	path := useTempConfig(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	origBackend := secret.DefaultBackend
+	mock := &testMockKeychain{items: map[string]string{}}
+	secret.DefaultBackend = mock
+	SetAutoMigrateKeychain(true)
+	defer func() {
+		secret.DefaultBackend = origBackend
+		SetAutoMigrateKeychain(false)
+	}()
+
+	content := "version = 2\ndefault_provider = 'glm'\n" +
+		"[providers.glm]\n" +
+		"ANTHROPIC_AUTH_TOKEN = 'sk-plain-glm'\n" +
+		"ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn'\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Plaintext was migrated into mock keychain
+	if mock.items["claude-switch/glm"] != "sk-plain-glm" {
+		t.Errorf("mock keychain = %+v, want sk-plain-glm", mock.items)
+	}
+
+	// Provider's raw token in config is now keychain:glm
+	if cfg.Providers["glm"].AuthTokenRaw() != "keychain:glm" {
+		t.Errorf("AuthTokenRaw = %q, want keychain:glm", cfg.Providers["glm"].AuthTokenRaw())
+	}
+
+	// AuthToken resolves from keychain back to sk-plain-glm
+	if cfg.Providers["glm"].AuthToken() != "sk-plain-glm" {
+		t.Errorf("AuthToken = %q, want sk-plain-glm", cfg.Providers["glm"].AuthToken())
+	}
+
+	// Backup file was created
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Errorf("backup file missing: %v", err)
 	}
 }

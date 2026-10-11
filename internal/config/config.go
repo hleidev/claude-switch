@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 
 	toml "github.com/pelletier/go-toml/v2"
+
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 // CurrentSchemaVersion is the on-disk config FORMAT version understood by this
@@ -48,8 +50,14 @@ type Config struct {
 // to hold the secret (AuthTokenKey) plus any overrides.
 type Provider map[string]string
 
-// AuthToken returns the provider's API key (empty if it relies on OAuth).
-func (p Provider) AuthToken() string { return p[AuthTokenKey] }
+// AuthTokenRaw returns the stored raw token reference (e.g. "keychain:...", "env:...", or plaintext).
+func (p Provider) AuthTokenRaw() string { return p[AuthTokenKey] }
+
+// AuthToken returns the resolved API key (empty if it relies on OAuth or resolution fails).
+func (p Provider) AuthToken() string {
+	val, _ := secret.Resolve(p[AuthTokenKey])
+	return val
+}
 
 // BaseURL returns the provider's configured endpoint (empty if it comes from a
 // preset instead).
@@ -64,6 +72,34 @@ var presetLookup func(name string) (map[string]string, bool)
 // SetPresetLookup wires the preset resolver used to minimize stored configs.
 func SetPresetLookup(f func(name string) (map[string]string, bool)) {
 	presetLookup = f
+}
+
+var autoMigrateKeychain bool
+
+// SetAutoMigrateKeychain enables automatic migration of plaintext secrets to Keychain on Load.
+func SetAutoMigrateKeychain(enabled bool) {
+	autoMigrateKeychain = enabled
+}
+
+func migrateSecretsToKeychain(c *Config) bool {
+	if !autoMigrateKeychain || !secret.DefaultBackend.IsAvailable() {
+		return false
+	}
+	migrated := false
+	for name, p := range c.Providers {
+		raw := p[AuthTokenKey]
+		if raw == "" {
+			continue
+		}
+		if secret.DetectKind(raw) == secret.KindPlaintext {
+			if err := secret.SaveToKeychain(name, raw); err == nil {
+				p[AuthTokenKey] = secret.KeychainRef(name)
+				c.Providers[name] = p
+				migrated = true
+			}
+		}
+	}
+	return migrated
 }
 
 // minimizeProviders removes any provider variable whose stored value already
@@ -163,10 +199,11 @@ func Load() (*Config, error) {
 	// so configs shrink to just the secret plus genuine overrides and track
 	// future preset changes automatically.
 	minimized := minimizeProviders(&c)
+	migrated := migrateSecretsToKeychain(&c)
 	// Persist an in-place change once, keeping a one-time backup of the original
-	// whenever the on-disk schema was upgraded.
-	if changed || minimized {
-		if changed {
+	// whenever the on-disk schema was upgraded or secrets were migrated.
+	if changed || minimized || migrated {
+		if changed || migrated {
 			_ = os.WriteFile(path+".bak", data, 0o600)
 		}
 		if err := Save(&c); err != nil {

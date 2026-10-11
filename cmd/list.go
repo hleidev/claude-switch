@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hleidev/claude-switch/internal/config"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 var listCmd = &cobra.Command{
@@ -29,8 +30,18 @@ var listCmd = &cobra.Command{
 		for _, name := range sortedNames(cfg) {
 			p := cfg.Providers[name]
 			key := "no key"
-			if p.AuthToken() != "" {
-				key = "key set"
+			raw := p.AuthTokenRaw()
+			switch secret.DetectKind(raw) {
+			case secret.KindKeychain:
+				key = "key: keychain"
+			case secret.KindEnv:
+				key = "key: " + raw
+			case secret.KindPlaintext:
+				key = "key: config"
+			default:
+				if p.AuthToken() != "" {
+					key = "key set"
+				}
 			}
 			fmt.Fprintf(out, "%s %s  %-14s %s  (%s)\n",
 				glyph(name == cfg.DefaultProvider, "✓"), glyph(name == current, "●"),

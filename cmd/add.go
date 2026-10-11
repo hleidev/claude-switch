@@ -13,6 +13,7 @@ import (
 
 	"github.com/hleidev/claude-switch/internal/config"
 	"github.com/hleidev/claude-switch/internal/presets"
+	"github.com/hleidev/claude-switch/internal/secret"
 )
 
 // addOptions is the resolved input for adding a provider. The interactive
@@ -56,10 +57,11 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 }
 
 var (
-	addKeyStdin bool
-	addBaseURL  string
-	addForce    bool
-	addNoVerify bool
+	addKeyStdin     bool
+	addBaseURL      string
+	addForce        bool
+	addNoVerify     bool
+	addFromKeychain string
 )
 
 var addCmd = &cobra.Command{
@@ -81,11 +83,25 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
-	// Non-interactive path: caller pipes the key in.
-	if addKeyStdin {
-		key, err := readAllStdin(cmd.InOrStdin())
-		if err != nil {
-			return err
+	// Non-interactive path: caller pipes the key in or points to existing keychain item.
+	if addKeyStdin || addFromKeychain != "" {
+		var key string
+		if addFromKeychain != "" {
+			key = secret.KeychainRef(addFromKeychain)
+		} else {
+			rawKey, err := readAllStdin(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			if secret.DetectKind(rawKey) == secret.KindPlaintext && secret.DefaultBackend.IsAvailable() {
+				if err := secret.SaveToKeychain(name, rawKey); err == nil {
+					key = secret.KeychainRef(name)
+				} else {
+					key = rawKey
+				}
+			} else {
+				key = rawKey
+			}
 		}
 		opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
 		if err := applyAdd(cfg, opts); err != nil {
@@ -113,13 +129,63 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if name == "claude" {
 		return fmt.Errorf("claude is the built-in OAuth fallback; it is not a configurable provider")
 	}
-	key, err := readSecret(fmt.Sprintf("Paste API key for %s", name))
-	if err != nil {
-		return err
+
+	var key string
+	// 1. Check if existing key is already in Keychain for this provider.
+	if _, exists := secret.DetectKeychain(name); exists {
+		reuse, err := confirm(fmt.Sprintf("Existing key for %s found in macOS Keychain. Reuse it?", name))
+		if err != nil {
+			return err
+		}
+		if reuse {
+			key = secret.KeychainRef(name)
+		}
 	}
+
+	// 2. If not reused, check if an environment variable exists.
 	if key == "" {
-		return fmt.Errorf("no key entered")
+		if envVar, envVal, found := secret.DetectEnv(name); found {
+			useEnv, err := confirm(fmt.Sprintf("Found $%s in environment. Import to macOS Keychain?", envVar))
+			if err != nil {
+				return err
+			}
+			if useEnv {
+				if secret.DefaultBackend.IsAvailable() {
+					if err := secret.SaveToKeychain(name, envVal); err != nil {
+						return fmt.Errorf("save to keychain: %w", err)
+					}
+					key = secret.KeychainRef(name)
+				} else {
+					key = "env:" + envVar
+				}
+			}
+		}
 	}
+
+	// 3. Otherwise prompt for key input.
+	if key == "" {
+		inputKey, err := readSecret(fmt.Sprintf("Paste API key for %s", name))
+		if err != nil {
+			return err
+		}
+		inputKey = strings.TrimSpace(inputKey)
+		if inputKey == "" {
+			return fmt.Errorf("no key entered")
+		}
+		if secret.DetectKind(inputKey) != secret.KindPlaintext {
+			key = inputKey
+		} else if secret.DefaultBackend.IsAvailable() {
+			if err := secret.SaveToKeychain(name, inputKey); err != nil {
+				fmt.Fprintf(errOut, "⚠ could not save to keychain (%v); saving to config\n", err)
+				key = inputKey
+			} else {
+				key = secret.KeychainRef(name)
+			}
+		} else {
+			key = inputKey
+		}
+	}
+
 	opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
 	if customURL != "" {
 		opts.BaseURL = customURL
@@ -164,6 +230,9 @@ func finishAdd(cmd *cobra.Command, opts addOptions) {
 	registered := registerKeyBestEffort(cmd, opts.Key)
 
 	fmt.Fprintf(out, "✓ wrote '%s' → %s\n", opts.Name, path)
+	if secret.DetectKind(opts.Key) == secret.KindKeychain {
+		fmt.Fprintln(out, "✓ key secured in macOS Keychain")
+	}
 	if registered {
 		fmt.Fprintln(out, "✓ key registered with Claude Code (~/.claude.json)")
 	} else {
@@ -233,5 +302,6 @@ func init() {
 	addCmd.Flags().StringVar(&addBaseURL, "base-url", "", "API base URL (required for custom providers)")
 	addCmd.Flags().BoolVar(&addForce, "force", false, "overwrite an existing provider")
 	addCmd.Flags().BoolVar(&addNoVerify, "no-verify", false, "skip the connectivity check")
+	addCmd.Flags().StringVar(&addFromKeychain, "from-keychain", "", "reuse existing Keychain item (account or service/account)")
 	rootCmd.AddCommand(addCmd)
 }
