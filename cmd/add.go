@@ -88,6 +88,12 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		var key string
 		if addFromKeychain != "" {
 			key = secret.KeychainRef(addFromKeychain)
+			if secret.DefaultBackend.IsAvailable() {
+				s, a := secret.ParseKeychainRef(key)
+				if _, err := secret.DefaultBackend.Get(s, a); err != nil {
+					return fmt.Errorf("keychain item (%s/%s) not found: %w", s, a, err)
+				}
+			}
 		} else {
 			rawKey, err := readAllStdin(cmd.InOrStdin())
 			if err != nil {
@@ -131,14 +137,27 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var key string
-	// 1. Check if existing key is already in Keychain for this provider.
-	if _, exists := secret.DetectKeychain(name); exists {
-		reuse, err := confirm(fmt.Sprintf("Existing key for %s found in macOS Keychain. Reuse it?", name))
+	effectiveBaseURL := customURL
+	if effectiveBaseURL == "" {
+		if preset, ok := presets.Lookup(name); ok {
+			effectiveBaseURL = preset[config.BaseURLKey]
+		}
+	}
+
+	// 1. Smart check: check if a key exists in Keychain (exact match or from other tools).
+	if match, exists := secret.DetectKeychainSmart(name, effectiveBaseURL); exists {
+		var promptMsg string
+		if match.Service == secret.DefaultService {
+			promptMsg = fmt.Sprintf("Existing key for %s found in macOS Keychain. Reuse it?", name)
+		} else {
+			promptMsg = fmt.Sprintf("Found existing Keychain item %q (from other tools). Reuse it?", match.Service+"/"+match.Account)
+		}
+		reuse, err := confirm(promptMsg)
 		if err != nil {
 			return err
 		}
 		if reuse {
-			key = secret.KeychainRef(name)
+			key = match.Ref()
 		}
 	}
 
@@ -162,9 +181,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 3. Otherwise prompt for key input.
+	// 3. Otherwise prompt for key input (allows pasting raw key or entering keychain:service/account).
 	if key == "" {
-		inputKey, err := readSecret(fmt.Sprintf("Paste API key for %s", name))
+		promptTitle := fmt.Sprintf("Paste API key for %s (or enter keychain:service/account)", name)
+		inputKey, err := readSecret(promptTitle)
 		if err != nil {
 			return err
 		}
@@ -172,7 +192,13 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if inputKey == "" {
 			return fmt.Errorf("no key entered")
 		}
-		if secret.DetectKind(inputKey) != secret.KindPlaintext {
+		if strings.HasPrefix(inputKey, "keychain:") {
+			s, a := secret.ParseKeychainRef(inputKey)
+			if _, err := secret.DefaultBackend.Get(s, a); err != nil {
+				return fmt.Errorf("keychain item (%s/%s) not found: %w", s, a, err)
+			}
+			key = inputKey
+		} else if secret.DetectKind(inputKey) != secret.KindPlaintext {
 			key = inputKey
 		} else if secret.DefaultBackend.IsAvailable() {
 			if err := secret.SaveToKeychain(name, inputKey); err != nil {

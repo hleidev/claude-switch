@@ -95,4 +95,11 @@ func TestApplyAddKeychainAndEnvRefs(t *testing.T) {
 	if cfg.Providers["glm"].AuthTokenRaw() != "env:GLM_KEY" {
 		t.Errorf("AuthTokenRaw = %q, want env:GLM_KEY", cfg.Providers["glm"].AuthTokenRaw())
 	}
+
+	if err := applyAdd(cfg, addOptions{Name: "custom-tool", Key: "keychain:other-tool/admin-key", BaseURL: "https://api.example.com"}); err != nil {
+		t.Fatalf("applyAdd custom keychain ref: %v", err)
+	}
+	if cfg.Providers["custom-tool"].AuthTokenRaw() != "keychain:other-tool/admin-key" {
+		t.Errorf("AuthTokenRaw = %q, want keychain:other-tool/admin-key", cfg.Providers["custom-tool"].AuthTokenRaw())
+	}
 }

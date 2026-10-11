@@ -3,6 +3,7 @@ package secret
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,29 @@ func (m *mockBackend) Set(service, account, secret string) error {
 func (m *mockBackend) Delete(service, account string) error {
 	delete(m.items, m.key(service, account))
 	return nil
+}
+
+func (m *mockBackend) Find(queryArgs ...string) (*KeychainMatch, error) {
+	if !m.available {
+		return nil, fmt.Errorf("mock unavailable")
+	}
+	var svc, acct string
+	for i := 0; i < len(queryArgs)-1; i++ {
+		if queryArgs[i] == "-s" {
+			svc = queryArgs[i+1]
+		}
+		if queryArgs[i] == "-a" {
+			acct = queryArgs[i+1]
+		}
+	}
+	for k, v := range m.items {
+		parts := strings.SplitN(k, "/", 2)
+		s, a := parts[0], parts[1]
+		if (svc == "" || svc == s) && (acct == "" || acct == a) {
+			return &KeychainMatch{Service: s, Account: a, Secret: v}, nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
 }
 
 func (m *mockBackend) IsAvailable() bool {
@@ -169,5 +193,93 @@ func TestDetectEnv(t *testing.T) {
 	_, _, found = DetectEnv("nonexistent-provider")
 	if found {
 		t.Error("expected DetectEnv for nonexistent-provider to be false")
+	}
+}
+
+func TestDetectKeychainSmart(t *testing.T) {
+	origBackend := DefaultBackend
+	defer func() { DefaultBackend = origBackend }()
+
+	mock := &mockBackend{
+		items: map[string]string{
+			"custom-ai-tool/coderplan": "sk-external-coderplan",
+			"open.bigmodel.cn/admin":   "sk-domain-glm",
+		},
+		available: true,
+	}
+	DefaultBackend = mock
+
+	// Case 1: Account matches provider name ("coderplan")
+	match, ok := DetectKeychainSmart("coderplan", "")
+	if !ok || match.Secret != "sk-external-coderplan" {
+		t.Fatalf("expected smart match for coderplan account, got %+v, ok=%v", match, ok)
+	}
+	if match.Ref() != "keychain:custom-ai-tool/coderplan" {
+		t.Errorf("expected ref keychain:custom-ai-tool/coderplan, got %q", match.Ref())
+	}
+
+	// Case 2: BaseURL domain matches service ("open.bigmodel.cn")
+	match, ok = DetectKeychainSmart("my-glm", "https://open.bigmodel.cn/api/anthropic")
+	if !ok || match.Secret != "sk-domain-glm" {
+		t.Fatalf("expected smart match for glm domain, got %+v, ok=%v", match, ok)
+	}
+	if match.Ref() != "keychain:open.bigmodel.cn/admin" {
+		t.Errorf("expected ref keychain:open.bigmodel.cn/admin, got %q", match.Ref())
+	}
+
+	// Case 3: BaseURL root domain matches service ("bigmodel.cn" when URL is sub.bigmodel.cn)
+	mock.items["bigmodel.cn/root"] = "sk-root-domain"
+	match, ok = DetectKeychainSmart("another-glm", "https://sub.bigmodel.cn:8443/v1")
+	if !ok || match.Secret != "sk-root-domain" {
+		t.Fatalf("expected smart match for root domain, got %+v, ok=%v", match, ok)
+	}
+
+	// Case 4: Hyphen to underscore name mapping
+	mock.items["my_custom_provider/default"] = "sk-underscore"
+	match, ok = DetectKeychainSmart("my-custom-provider", "")
+	if !ok || match.Secret != "sk-underscore" {
+		t.Fatalf("expected smart match for underscore converted name, got %+v, ok=%v", match, ok)
+	}
+}
+
+func TestCleanHost(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"https://api.coderplan.ai", "api.coderplan.ai"},
+		{"https://api.coderplan.ai/v1/messages", "api.coderplan.ai"},
+		{"http://localhost:8080/api", "localhost"},
+		{"api.example.com", "api.example.com"},
+	}
+	for _, tt := range tests {
+		got := cleanHost(tt.in)
+		if got != tt.want {
+			t.Errorf("cleanHost(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestExtractBlob(t *testing.T) {
+	sample := `attributes:
+    "acct"<blob>="deepseek"
+    "svce"<blob>="claude-switch"`
+	if got := extractBlob(sample, "acct"); got != "deepseek" {
+		t.Errorf("extractBlob acct = %q, want deepseek", got)
+	}
+	if got := extractBlob(sample, "svce"); got != "claude-switch" {
+		t.Errorf("extractBlob svce = %q, want claude-switch", got)
+	}
+	if got := extractBlob(sample, "missing"); got != "" {
+		t.Errorf("extractBlob missing = %q, want empty", got)
+	}
+}
+
+func TestKeychainRefNormalization(t *testing.T) {
+	if got := KeychainRef("deepseek"); got != "keychain:deepseek" {
+		t.Errorf("KeychainRef(deepseek) = %q, want keychain:deepseek", got)
+	}
+	if got := KeychainRef("keychain:my-service/my-account"); got != "keychain:my-service/my-account" {
+		t.Errorf("KeychainRef with prefix = %q, want keychain:my-service/my-account", got)
 	}
 }

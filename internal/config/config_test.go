@@ -198,6 +198,10 @@ func (m *testMockKeychain) Delete(s, a string) error {
 	return nil
 }
 
+func (m *testMockKeychain) Find(queryArgs ...string) (*secret.KeychainMatch, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *testMockKeychain) IsAvailable() bool { return true }
 
 func TestMigrateSecretsToKeychain(t *testing.T) {

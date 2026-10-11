@@ -42,13 +42,7 @@ var removeCmd = &cobra.Command{
 				return nil
 			}
 		}
-		p := cfg.Providers[name]
-		if raw := p.AuthTokenRaw(); secret.DetectKind(raw) == secret.KindKeychain {
-			service, account := secret.ParseKeychainRef(raw)
-			_ = secret.DefaultBackend.Delete(service, account)
-		} else {
-			_ = secret.DeleteFromKeychain(name)
-		}
+		cleanupKeychainOnRemove(cfg, name)
 		delete(cfg.Providers, name)
 		if cfg.DefaultProvider == name {
 			cfg.DefaultProvider = "claude"
@@ -59,6 +53,32 @@ var removeCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "✓ removed %s\n", name)
 		return nil
 	},
+}
+
+func cleanupKeychainOnRemove(cfg *config.Config, name string) {
+	p, ok := cfg.Providers[name]
+	if !ok {
+		return
+	}
+	raw := p.AuthTokenRaw()
+	if secret.DetectKind(raw) != secret.KindKeychain {
+		return
+	}
+	service, account := secret.ParseKeychainRef(raw)
+	if service != secret.DefaultService || account != name {
+		return
+	}
+	for otherName, otherP := range cfg.Providers {
+		if otherName == name {
+			continue
+		}
+		if otherRaw := otherP.AuthTokenRaw(); otherRaw != "" {
+			if oService, oAccount := secret.ParseKeychainRef(otherRaw); oService == service && oAccount == account {
+				return
+			}
+		}
+	}
+	_ = secret.DefaultBackend.Delete(service, account)
 }
 
 func init() {
