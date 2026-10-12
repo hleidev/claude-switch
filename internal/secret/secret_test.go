@@ -240,6 +240,17 @@ func TestDetectKeychainSmart(t *testing.T) {
 	if !ok || match.Secret != "sk-underscore" {
 		t.Fatalf("expected smart match for underscore converted name, got %+v, ok=%v", match, ok)
 	}
+
+	// Case 5: Env-style name matching (e.g. CODERPLAN_API_KEY with dotfiles-secret account)
+	delete(mock.items, "custom-ai-tool/coderplan")
+	mock.items["CODERPLAN_API_KEY/dotfiles-secret"] = "sk-dotfiles-coderplan"
+	match, ok = DetectKeychainSmart("coderplan", "")
+	if !ok || match.Secret != "sk-dotfiles-coderplan" {
+		t.Fatalf("expected smart match for CODERPLAN_API_KEY, got %+v, ok=%v", match, ok)
+	}
+	if match.Ref() != "keychain:CODERPLAN_API_KEY/dotfiles-secret" {
+		t.Errorf("expected ref keychain:CODERPLAN_API_KEY/dotfiles-secret, got %q", match.Ref())
+	}
 }
 
 func TestCleanHost(t *testing.T) {

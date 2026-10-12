@@ -152,7 +152,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		} else {
 			promptMsg = fmt.Sprintf("Found existing Keychain item %q (from other tools). Reuse it?", match.Service+"/"+match.Account)
 		}
-		reuse, err := confirm(promptMsg)
+		reuse, err := confirmWithDefault(promptMsg, true)
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	// 2. If not reused, check if an environment variable exists.
 	if key == "" {
 		if envVar, envVal, found := secret.DetectEnv(name); found {
-			useEnv, err := confirm(fmt.Sprintf("Found $%s in environment. Import to macOS Keychain?", envVar))
+			useEnv, err := confirmWithDefault(fmt.Sprintf("Found $%s in environment. Import to macOS Keychain?", envVar), true)
 			if err != nil {
 				return err
 			}

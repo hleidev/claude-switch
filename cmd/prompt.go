@@ -26,7 +26,12 @@ func readSecret(prompt string) (string, error) {
 
 // confirm asks a yes/no question, defaulting to no.
 func confirm(prompt string) (bool, error) {
-	var ok bool
+	return confirmWithDefault(prompt, false)
+}
+
+// confirmWithDefault asks a yes/no question with a specified default selection.
+func confirmWithDefault(prompt string, def bool) (bool, error) {
+	ok := def
 	err := huh.NewConfirm().Title(prompt).Affirmative("Yes").Negative("No").Value(&ok).Run()
 	return ok, err
 }

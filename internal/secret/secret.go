@@ -240,7 +240,35 @@ func DetectKeychainSmart(provider, baseURL string) (*KeychainMatch, bool) {
 	if m, err := DefaultBackend.Find("-a", provider); err == nil && m.Secret != "" {
 		return m, true
 	}
-	// 4. Alternate naming convention (hyphen <-> underscore)
+	// 4. Common env-style variable names (e.g. CODERPLAN_API_KEY, CODERPLAN_AUTH_TOKEN)
+	upper := strings.ReplaceAll(strings.ToUpper(provider), "-", "_")
+	lower := strings.ReplaceAll(strings.ToLower(provider), "-", "_")
+	candidates := []string{
+		upper + "_API_KEY",
+		upper + "_AUTH_TOKEN",
+		upper + "_KEY",
+		upper + "_TOKEN",
+		upper,
+		lower + "_api_key",
+		lower + "_auth_token",
+		lower + "_key",
+		lower + "_token",
+	}
+	if provider == "anthropic" || provider == "claude" {
+		candidates = append(candidates, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+	}
+	for _, c := range candidates {
+		if c == provider {
+			continue
+		}
+		if m, err := DefaultBackend.Find("-s", c); err == nil && m.Secret != "" {
+			return m, true
+		}
+		if m, err := DefaultBackend.Find("-a", c); err == nil && m.Secret != "" {
+			return m, true
+		}
+	}
+	// 5. Alternate naming convention (hyphen <-> underscore)
 	altProvider := strings.ReplaceAll(provider, "-", "_")
 	if altProvider == provider {
 		altProvider = strings.ReplaceAll(provider, "_", "-")
