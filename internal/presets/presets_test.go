@@ -34,6 +34,9 @@ func TestLookupKnown(t *testing.T) {
 	if cp["ANTHROPIC_BASE_URL"] != "https://api.coderplan.ai" {
 		t.Errorf("coderplan base url wrong: %+v", cp)
 	}
+	if cp["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "claude-sonnet-5-5" || cp["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "claude-opus-5-5" || cp["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "claude-haiku-5-5" {
+		t.Errorf("coderplan model mappings wrong: %+v", cp)
+	}
 }
 
 func TestLookupUnknown(t *testing.T) {
