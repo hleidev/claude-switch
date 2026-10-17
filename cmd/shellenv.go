@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hleidev/claude-switch/internal/bridge"
 	"github.com/hleidev/claude-switch/internal/config"
 	"github.com/hleidev/claude-switch/internal/presets"
 	"github.com/hleidev/claude-switch/internal/shellenv"
@@ -56,6 +57,14 @@ var shellenvCmd = &cobra.Command{
 			return nil
 		}
 
+		if p.Protocol() == config.ProtocolOpenAI {
+			if err := bridge.EnsureRunning(); err != nil {
+				if shellenvAnnounce {
+					fmt.Fprintf(errOut, "⚠ bridge warning: %v\n", err)
+				}
+			}
+		}
+
 		preset, _ := presets.Lookup(name)
 		code, err := shellenv.ForProvider(cfg, name, preset)
 		if err != nil {
@@ -69,7 +78,11 @@ var shellenvCmd = &cobra.Command{
 			if p.AuthToken() == "" {
 				fmt.Fprintf(errOut, "⚠ %s has no auth_token; claude will fall back to OAuth (run: cs edit %s)\n", name, name)
 			}
-			fmt.Fprintf(errOut, "✓ switched to %s\n", name)
+			if p.Protocol() == config.ProtocolOpenAI {
+				fmt.Fprintf(errOut, "✓ switched to %s (protocol: openai -> bridge :%d)\n", name, bridge.DefaultPort)
+			} else {
+				fmt.Fprintf(errOut, "✓ switched to %s\n", name)
+			}
 		}
 		return nil
 	},

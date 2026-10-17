@@ -116,3 +116,78 @@ func TestBuildEnvResolvesSecret(t *testing.T) {
 		t.Errorf("ANTHROPIC_AUTH_TOKEN = %q, want sk-from-env", token)
 	}
 }
+
+func TestWrapBridgeURL(t *testing.T) {
+	tests := []struct {
+		bridgeBase string
+		rawURL     string
+		want       string
+	}{
+		{
+			bridgeBase: "http://127.0.0.1:8088",
+			rawURL:     "https://wawazz.xyz",
+			want:       "http://127.0.0.1:8088/https/wawazz.xyz",
+		},
+		{
+			bridgeBase: "http://127.0.0.1:8088",
+			rawURL:     "https://company.ai/v1",
+			want:       "http://127.0.0.1:8088/https/company.ai/v1",
+		},
+		{
+			bridgeBase: "http://127.0.0.1:8088",
+			rawURL:     "http://localhost:11434",
+			want:       "http://127.0.0.1:8088/http/localhost:11434",
+		},
+		{
+			bridgeBase: "http://127.0.0.1:8088",
+			rawURL:     "http://127.0.0.1:8088/https/wawazz.xyz",
+			want:       "http://127.0.0.1:8088/https/wawazz.xyz", // already wrapped
+		},
+		{
+			bridgeBase: "",
+			rawURL:     "https://wawazz.xyz",
+			want:       "http://127.0.0.1:8088/https/wawazz.xyz", // default bridge base
+		},
+	}
+
+	for _, tt := range tests {
+		got := WrapBridgeURL(tt.bridgeBase, tt.rawURL)
+		if got != tt.want {
+			t.Errorf("WrapBridgeURL(%q, %q) = %q, want %q", tt.bridgeBase, tt.rawURL, got, tt.want)
+		}
+	}
+}
+
+func TestBuildEnvOpenAIProtocolWrapsBaseURL(t *testing.T) {
+	c := &Config{Providers: map[string]Provider{
+		"sol": {
+			"ANTHROPIC_AUTH_TOKEN":   "sk-test",
+			"ANTHROPIC_BASE_URL":     "https://wawazz.xyz",
+			"CLAUDE_SWITCH_PROTOCOL": "openai",
+			"ANTHROPIC_MODEL":        "gpt-6.1-sol",
+		},
+	}}
+
+	got, err := c.BuildEnv("sol", nil)
+	if err != nil {
+		t.Fatalf("BuildEnv: %v", err)
+	}
+
+	var baseURL, proto string
+	for _, v := range got {
+		if v.Key == "ANTHROPIC_BASE_URL" {
+			baseURL = v.Value
+		}
+		if v.Key == "CLAUDE_SWITCH_PROTOCOL" {
+			proto = v.Value
+		}
+	}
+
+	wantURL := "http://127.0.0.1:8088/https/wawazz.xyz"
+	if baseURL != wantURL {
+		t.Errorf("ANTHROPIC_BASE_URL = %q, want %q", baseURL, wantURL)
+	}
+	if proto != "openai" {
+		t.Errorf("CLAUDE_SWITCH_PROTOCOL = %q, want openai", proto)
+	}
+}

@@ -17,12 +17,19 @@ import (
 )
 
 // addOptions is the resolved input for adding a provider. The interactive
+// addOptions is the resolved input for adding a provider. The interactive
 // prompts and flag parsing both reduce to this struct so the core is testable.
 type addOptions struct {
-	Name    string
-	BaseURL string // only for custom providers; presets supply their own
-	Key     string
-	Force   bool
+	Name        string
+	Protocol    string
+	BaseURL     string // only for custom providers; presets supply their own
+	Model       string
+	SonnetModel string
+	HaikuModel  string
+	OpusModel   string
+	FableModel  string
+	Key         string
+	Force       bool
 }
 
 // applyAdd validates options and writes the provider into cfg (without saving).
@@ -42,6 +49,15 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 	if !isPreset && opts.BaseURL == "" {
 		return fmt.Errorf("base_url is required for custom provider %q", opts.Name)
 	}
+
+	proto := strings.ToLower(strings.TrimSpace(opts.Protocol))
+	if proto == "" {
+		proto = config.ProtocolAnthropic
+	}
+	if proto != config.ProtocolAnthropic && proto != config.ProtocolOpenAI {
+		return fmt.Errorf("unsupported protocol %q (supported: anthropic, openai)", opts.Protocol)
+	}
+
 	if cfg.Providers == nil {
 		cfg.Providers = map[string]config.Provider{}
 	}
@@ -49,6 +65,61 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 	if opts.BaseURL != "" {
 		p[config.BaseURLKey] = opts.BaseURL
 	}
+
+	if proto == config.ProtocolOpenAI {
+		p[config.ProtocolKey] = config.ProtocolOpenAI
+		p[config.AutoCompactWindowKey] = config.Default1MWindow
+
+		if m := strings.TrimSpace(opts.Model); m != "" {
+			// Explicit --model: apply to all roles unless individually overridden
+			p[config.ModelKey] = m
+			p[config.SonnetModelKey] = m
+			p[config.HaikuModelKey] = m
+			p[config.OpusModelKey] = m
+			p[config.FableModelKey] = m
+			p[config.SubagentModelKey] = m
+		} else {
+			// Tier-specific default model mappings
+			p[config.OpusModelKey] = config.DefaultOpenAIOpusModel         // gpt-6.1-sol (heavy reasoning/flagship)
+			p[config.SonnetModelKey] = config.DefaultOpenAISonnetModel     // gpt-6-sol (main coding/reasoning)
+			p[config.HaikuModelKey] = config.DefaultOpenAIHaikuModel       // gpt-6-luna (fast/lightweight)
+			p[config.FableModelKey] = config.DefaultOpenAIFableModel       // gpt-6-astra (exploratory/frontier)
+			p[config.SubagentModelKey] = config.DefaultOpenAISubagentModel // gpt-6-luna (subagents)
+			p[config.ModelKey] = config.DefaultOpenAIModel                 // gpt-6-sol (primary fallback)
+		}
+
+		if opts.SonnetModel != "" {
+			p[config.SonnetModelKey] = opts.SonnetModel
+		}
+		if opts.HaikuModel != "" {
+			p[config.HaikuModelKey] = opts.HaikuModel
+			p[config.SubagentModelKey] = opts.HaikuModel
+		}
+		if opts.OpusModel != "" {
+			p[config.OpusModelKey] = opts.OpusModel
+		}
+		if opts.FableModel != "" {
+			p[config.FableModelKey] = opts.FableModel
+		}
+	} else {
+
+		if opts.Model != "" {
+			p[config.ModelKey] = opts.Model
+		}
+		if opts.SonnetModel != "" {
+			p[config.SonnetModelKey] = opts.SonnetModel
+		}
+		if opts.HaikuModel != "" {
+			p[config.HaikuModelKey] = opts.HaikuModel
+		}
+		if opts.OpusModel != "" {
+			p[config.OpusModelKey] = opts.OpusModel
+		}
+		if opts.FableModel != "" {
+			p[config.FableModelKey] = opts.FableModel
+		}
+	}
+
 	if opts.Key != "" {
 		p[config.AuthTokenKey] = opts.Key
 	}
@@ -59,6 +130,12 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 var (
 	addKeyStdin     bool
 	addBaseURL      string
+	addProtocol     string
+	addModel        string
+	addSonnetModel  string
+	addHaikuModel   string
+	addOpusModel    string
+	addFableModel   string
 	addForce        bool
 	addNoVerify     bool
 	addFromKeychain string
@@ -109,7 +186,18 @@ func runAdd(cmd *cobra.Command, args []string) error {
 				key = rawKey
 			}
 		}
-		opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
+		opts := addOptions{
+			Name:        name,
+			Protocol:    addProtocol,
+			BaseURL:     addBaseURL,
+			Model:       addModel,
+			SonnetModel: addSonnetModel,
+			HaikuModel:  addHaikuModel,
+			OpusModel:   addOpusModel,
+			FableModel:  addFableModel,
+			Key:         key,
+			Force:       addForce,
+		}
 		if err := applyAdd(cfg, opts); err != nil {
 			return err
 		}
@@ -125,9 +213,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Interactive path.
-	var customURL string
+	var customURL, customProto, customModel string
 	if name == "" {
-		name, customURL, err = pickProvider()
+		name, customURL, customProto, customModel, err = pickProvider()
 		if err != nil {
 			return err
 		}
@@ -212,7 +300,27 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	opts := addOptions{Name: name, BaseURL: addBaseURL, Key: key, Force: addForce}
+	proto := addProtocol
+	if customProto != "" && (addProtocol == "" || addProtocol == config.ProtocolAnthropic) {
+		proto = customProto
+	}
+	model := addModel
+	if customModel != "" && addModel == "" {
+		model = customModel
+	}
+
+	opts := addOptions{
+		Name:        name,
+		Protocol:    proto,
+		BaseURL:     addBaseURL,
+		Model:       model,
+		SonnetModel: addSonnetModel,
+		HaikuModel:  addHaikuModel,
+		OpusModel:   addOpusModel,
+		FableModel:  addFableModel,
+		Key:         key,
+		Force:       addForce,
+	}
 	if customURL != "" {
 		opts.BaseURL = customURL
 	}
@@ -259,6 +367,11 @@ func finishAdd(cmd *cobra.Command, opts addOptions) {
 	if secret.DetectKind(opts.Key) == secret.KindKeychain {
 		fmt.Fprintln(out, "✓ key secured in macOS Keychain")
 	}
+	if opts.Protocol == config.ProtocolOpenAI {
+		fmt.Fprintf(out, "✓ protocol: openai (Opus: %s, Sonnet: %s, Haiku: %s, Fable: %s via bridge :8088)\n",
+			config.DefaultOpenAIOpusModel, config.DefaultOpenAISonnetModel, config.DefaultOpenAIHaikuModel, config.DefaultOpenAIFableModel)
+	}
+
 	if registered {
 		fmt.Fprintln(out, "✓ key registered with Claude Code (~/.claude.json)")
 	} else {
@@ -280,8 +393,8 @@ func probe(baseURL string) error {
 }
 
 // pickProvider shows the preset menu plus a custom option. For a custom
-// provider it also returns the entered base_url (empty for a preset choice).
-func pickProvider() (name, baseURL string, err error) {
+// provider it also returns the entered base_url, protocol, and model.
+func pickProvider() (name, baseURL, protocol, model string, err error) {
 	const customOpt = "custom…"
 	var opts []huh.Option[string]
 	for _, n := range presets.Names() {
@@ -291,27 +404,57 @@ func pickProvider() (name, baseURL string, err error) {
 
 	var choice string
 	if err := huh.NewSelect[string]().Title("Choose a provider").Options(opts...).Value(&choice).Run(); err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 	if choice != customOpt {
-		return choice, "", nil
+		return choice, "", config.ProtocolAnthropic, "", nil
 	}
 
 	if err := huh.NewInput().Title("Provider name").Value(&name).Run(); err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", "", fmt.Errorf("provider name is required")
+		return "", "", "", "", fmt.Errorf("provider name is required")
 	}
+
+	protocol = addProtocol
+	if protocol == "" || protocol == config.ProtocolAnthropic {
+		protoOpts := []huh.Option[string]{
+			huh.NewOption("anthropic (Native / Anthropic-compatible API)", config.ProtocolAnthropic),
+			huh.NewOption("openai (Codex / OpenAI-compatible -> via bridge)", config.ProtocolOpenAI),
+		}
+		if err := huh.NewSelect[string]().Title("Protocol").Options(protoOpts...).Value(&protocol).Run(); err != nil {
+			return "", "", "", "", err
+		}
+	}
+
 	// A flag-provided --base-url wins; otherwise prompt for it.
 	if addBaseURL != "" {
-		return name, addBaseURL, nil
+		baseURL = addBaseURL
+	} else {
+		if err := huh.NewInput().Title("base_url").Value(&baseURL).Run(); err != nil {
+			return "", "", "", "", err
+		}
+		baseURL = strings.TrimSpace(baseURL)
 	}
-	if err := huh.NewInput().Title("base_url").Value(&baseURL).Run(); err != nil {
-		return "", "", err
+
+	if protocol == config.ProtocolOpenAI {
+		if addModel != "" {
+			model = addModel
+		} else {
+			model = config.DefaultOpenAIModel
+			if err := huh.NewInput().Title("Model (default: " + config.DefaultOpenAIModel + ")").Value(&model).Run(); err != nil {
+				return "", "", "", "", err
+			}
+			model = strings.TrimSpace(model)
+			if model == "" {
+				model = config.DefaultOpenAIModel
+			}
+		}
 	}
-	return name, strings.TrimSpace(baseURL), nil
+
+	return name, baseURL, protocol, model, nil
 }
 
 func readAllStdin(r io.Reader) (string, error) {
@@ -326,6 +469,12 @@ func readAllStdin(r io.Reader) (string, error) {
 func init() {
 	addCmd.Flags().BoolVar(&addKeyStdin, "key-stdin", false, "read the API key from stdin (non-interactive)")
 	addCmd.Flags().StringVar(&addBaseURL, "base-url", "", "API base URL (required for custom providers)")
+	addCmd.Flags().StringVar(&addProtocol, "protocol", "anthropic", "protocol type: 'anthropic' (default) or 'openai'")
+	addCmd.Flags().StringVar(&addModel, "model", "", "model name (applies to all 4 Claude roles if specific role flags omitted)")
+	addCmd.Flags().StringVar(&addSonnetModel, "sonnet-model", "", "override model for Sonnet role (main coding/reasoning)")
+	addCmd.Flags().StringVar(&addHaikuModel, "haiku-model", "", "override model for Haiku role (fast/subagent tasks)")
+	addCmd.Flags().StringVar(&addOpusModel, "opus-model", "", "override model for Opus role (deep reasoning)")
+	addCmd.Flags().StringVar(&addFableModel, "fable-model", "", "override model for Fable role (experimental tasks)")
 	addCmd.Flags().BoolVar(&addForce, "force", false, "overwrite an existing provider")
 	addCmd.Flags().BoolVar(&addNoVerify, "no-verify", false, "skip the connectivity check")
 	addCmd.Flags().StringVar(&addFromKeychain, "from-keychain", "", "reuse existing Keychain item (account or service/account)")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -33,7 +34,44 @@ const (
 	BaseURLKey = "ANTHROPIC_BASE_URL"
 	// ProviderVar records the active provider name in the injected environment.
 	ProviderVar = "CLAUDE_SWITCH_PROVIDER"
+	// ProtocolKey records the protocol type (anthropic or openai).
+	ProtocolKey = "CLAUDE_SWITCH_PROTOCOL"
 )
+
+// Supported protocol kinds.
+const (
+	ProtocolAnthropic = "anthropic"
+	ProtocolOpenAI    = "openai"
+)
+
+// Standard Claude model slots.
+const (
+	ModelKey         = "ANTHROPIC_MODEL"
+	SonnetModelKey   = "ANTHROPIC_DEFAULT_SONNET_MODEL"
+	HaikuModelKey    = "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+	OpusModelKey     = "ANTHROPIC_DEFAULT_OPUS_MODEL"
+	FableModelKey    = "ANTHROPIC_DEFAULT_FABLE_MODEL"
+	SubagentModelKey = "CLAUDE_CODE_SUBAGENT_MODEL"
+)
+
+// Default OpenAI protocol model mappings by Claude role (native 1M context support).
+const (
+	DefaultOpenAIOpusModel     = "gpt-6.1-sol[1m]"
+	DefaultOpenAISonnetModel   = "gpt-6-sol[1m]"
+	DefaultOpenAIHaikuModel    = "gpt-6-luna[1m]"
+	DefaultOpenAIFableModel    = "gpt-6-astra[1m]"
+	DefaultOpenAISubagentModel = "gpt-6-luna[1m]"
+	DefaultOpenAIModel         = "gpt-6-sol[1m]"
+)
+
+// AutoCompactWindowKey is the environment variable Claude Code uses for compaction token budget.
+const AutoCompactWindowKey = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+
+// Default1MWindow is the default 1M token compaction window.
+const Default1MWindow = "1000000"
+
+// DefaultBridgeBase is the default base URL for the local OpenAI-to-Anthropic translation bridge.
+const DefaultBridgeBase = "http://127.0.0.1:8088"
 
 // Config is the top-level configuration document.
 type Config struct {
@@ -62,6 +100,32 @@ func (p Provider) AuthToken() string {
 // BaseURL returns the provider's configured endpoint (empty if it comes from a
 // preset instead).
 func (p Provider) BaseURL() string { return p[BaseURLKey] }
+
+// Protocol returns the configured protocol ("anthropic" or "openai").
+// Defaults to "anthropic" if unspecified.
+func (p Provider) Protocol() string {
+	if proto := strings.ToLower(strings.TrimSpace(p[ProtocolKey])); proto != "" {
+		return proto
+	}
+	// Backward-compatibility: if base_url explicitly points to local bridge path, infer openai
+	raw := p[BaseURLKey]
+	if strings.Contains(raw, "127.0.0.1:8088/http") || strings.Contains(raw, "localhost:8088/http") {
+		return ProtocolOpenAI
+	}
+	return ProtocolAnthropic
+}
+
+// UpstreamBaseURL returns the actual upstream endpoint, stripping any bridge prefix if present.
+func (p Provider) UpstreamBaseURL() string {
+	raw := p[BaseURLKey]
+	if idx := strings.Index(raw, "/https/"); idx != -1 {
+		return "https://" + raw[idx+7:]
+	}
+	if idx := strings.Index(raw, "/http/"); idx != -1 {
+		return "http://" + raw[idx+6:]
+	}
+	return raw
+}
 
 // presetLookup resolves a provider's built-in preset variables. It is injected
 // by the cmd layer (via SetPresetLookup) rather than imported, so this package

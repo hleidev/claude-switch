@@ -27,6 +27,10 @@ var statusCmd = &cobra.Command{
 			fmt.Fprintln(out, "This terminal:   claude (OAuth) — no provider injected")
 		} else {
 			fmt.Fprintf(out, "This terminal:   %s\n", current)
+			if p, ok := cfg.Providers[current]; ok && p.Protocol() == config.ProtocolOpenAI {
+				fmt.Fprintln(out, "  protocol:      openai (via bridge)")
+				fmt.Fprintf(out, "  upstream:      %s\n", p.UpstreamBaseURL())
+			}
 			fmt.Fprintf(out, "  base_url:      %s\n", os.Getenv("ANTHROPIC_BASE_URL"))
 			fmt.Fprintf(out, "  model:         %s\n", os.Getenv("ANTHROPIC_MODEL"))
 			if os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
@@ -43,6 +47,7 @@ var statusCmd = &cobra.Command{
 			} else {
 				fmt.Fprintln(out, "  auth_token:    not set")
 			}
+
 		}
 		fmt.Fprintf(out, "New-terminal default: %s\n", cfg.DefaultProvider)
 		fmt.Fprintf(out, "Config:          %s\n", path)

@@ -43,10 +43,19 @@ var listCmd = &cobra.Command{
 					key = "key set"
 				}
 			}
-			fmt.Fprintf(out, "%s %s  %-14s %s  (%s)\n",
+			protoTag := ""
+			if p.Protocol() == config.ProtocolOpenAI {
+				protoTag = " [openai]"
+			}
+			urlStr := p.UpstreamBaseURL()
+			if urlStr == "" {
+				urlStr = resolvedBaseURL(cfg, name)
+			}
+			fmt.Fprintf(out, "%s %s  %-14s %s  (%s)%s\n",
 				glyph(name == cfg.DefaultProvider, "✓"), glyph(name == current, "●"),
-				name, resolvedBaseURL(cfg, name), key)
+				name, urlStr, key, protoTag)
 		}
+
 		// claude is always an available target (OAuth fallback), not a config entry.
 		fmt.Fprintf(out, "%s %s  %-14s %s\n",
 			glyph(cfg.DefaultProvider == "claude", "✓"), glyph(current == "claude", "●"),

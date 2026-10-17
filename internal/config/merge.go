@@ -2,10 +2,35 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/hleidev/claude-switch/internal/secret"
 )
+
+// WrapBridgeURL wraps a raw upstream URL into the local bridge proxy URL.
+// If the URL is already wrapped or points to localhost/127.0.0.1 with a proto path, it is returned unchanged.
+func WrapBridgeURL(bridgeBase, rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return rawURL
+	}
+	if (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost") && (strings.Contains(u.Path, "/http/") || strings.Contains(u.Path, "/https/")) {
+		return rawURL
+	}
+	if bridgeBase == "" {
+		bridgeBase = DefaultBridgeBase
+	}
+	bridgeBase = strings.TrimRight(bridgeBase, "/")
+	cleanPath := strings.TrimRight(u.Path, "/")
+	return fmt.Sprintf("%s/%s/%s%s", bridgeBase, u.Scheme, u.Host, cleanPath)
+}
 
 // EnvVar is a single environment-variable assignment.
 type EnvVar struct {
@@ -38,6 +63,16 @@ func (c *Config) BuildEnv(name string, preset map[string]string) ([]EnvVar, erro
 	}
 	for k, v := range p {
 		merged[k] = v
+	}
+
+	if p.Protocol() == ProtocolOpenAI {
+		bridgeBase := os.Getenv("CLAUDE_SWITCH_BRIDGE_BASE")
+		if bridgeBase == "" {
+			bridgeBase = DefaultBridgeBase
+		}
+		if rawURL, ok := merged[BaseURLKey]; ok && rawURL != "" {
+			merged[BaseURLKey] = WrapBridgeURL(bridgeBase, rawURL)
+		}
 	}
 
 	keys := make([]string, 0, len(merged))

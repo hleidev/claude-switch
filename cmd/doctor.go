@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 
+	"github.com/hleidev/claude-switch/internal/bridge"
 	"github.com/hleidev/claude-switch/internal/claudejson"
 	"github.com/hleidev/claude-switch/internal/config"
 	"github.com/hleidev/claude-switch/internal/secret"
@@ -65,6 +67,24 @@ var doctorCmd = &cobra.Command{
 				fmt.Fprintf(out, "%s provider %q has a key\n", ok(keyVal != ""), name)
 			}
 			fmt.Fprintf(out, "%s provider %q resolves a base_url\n", ok(resolvedBaseURL(cfg, name) != ""), name)
+		}
+
+		hasOpenAI := false
+		for _, name := range sortedNames(cfg) {
+			if cfg.Providers[name].Protocol() == config.ProtocolOpenAI {
+				hasOpenAI = true
+				break
+			}
+		}
+		if hasOpenAI {
+			_, uvErr := exec.LookPath("uv")
+			fmt.Fprintf(out, "%s uv installed (required for OpenAI bridge)\n", ok(uvErr == nil))
+			running, pid, _ := bridge.Status(bridge.DefaultPort)
+			if running {
+				fmt.Fprintf(out, "%s OpenAI bridge running on :%d (pid %d)\n", ok(true), bridge.DefaultPort, pid)
+			} else {
+				fmt.Fprintf(out, "… OpenAI bridge not running on :%d (auto-starts on `cs use`)\n", bridge.DefaultPort)
+			}
 		}
 
 		if path, err := claudejson.DefaultPath(); err == nil {
