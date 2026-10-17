@@ -33,17 +33,14 @@ var statusCmd = &cobra.Command{
 			}
 			fmt.Fprintf(out, "  base_url:      %s\n", os.Getenv("ANTHROPIC_BASE_URL"))
 			fmt.Fprintf(out, "  model:         %s\n", os.Getenv("ANTHROPIC_MODEL"))
-			if os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
+			if token := os.Getenv("ANTHROPIC_AUTH_TOKEN"); token != "" {
 				source := "hidden"
 				if p, ok := cfg.Providers[current]; ok {
-					switch secret.DetectKind(p.AuthTokenRaw()) {
-					case secret.KindKeychain:
-						source = "keychain"
-					case secret.KindEnv:
-						source = p.AuthTokenRaw()
+					if src := secret.FormatSource(p.AuthTokenRaw()); src != "none" {
+						source = src
 					}
 				}
-				fmt.Fprintf(out, "  auth_token:    set (%s)\n", source)
+				fmt.Fprintf(out, "  auth_token:    set (%s, %s)\n", source, secret.Mask(token))
 			} else {
 				fmt.Fprintln(out, "  auth_token:    not set")
 			}

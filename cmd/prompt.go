@@ -24,6 +24,19 @@ func readSecret(prompt string) (string, error) {
 	return v, err
 }
 
+// readLine prompts for a value with normal visible input. Used for typing
+// non-secret reference URIs (env:VAR, keychain:svc/acc, op://..., cmd:...).
+func readLine(prompt, placeholder string) (string, error) {
+	var v string
+	err := huh.NewInput().
+		Title(prompt).
+		Placeholder(placeholder).
+		EchoMode(huh.EchoModeNormal).
+		Value(&v).
+		Run()
+	return v, err
+}
+
 // confirm asks a yes/no question, defaulting to no.
 func confirm(prompt string) (bool, error) {
 	return confirmWithDefault(prompt, false)

@@ -31,17 +31,8 @@ var listCmd = &cobra.Command{
 			p := cfg.Providers[name]
 			key := "no key"
 			raw := p.AuthTokenRaw()
-			switch secret.DetectKind(raw) {
-			case secret.KindKeychain:
-				key = "key: keychain"
-			case secret.KindEnv:
-				key = "key: " + raw
-			case secret.KindPlaintext:
-				key = "key: config"
-			default:
-				if p.AuthToken() != "" {
-					key = "key set"
-				}
+			if src := secret.FormatSource(raw); src != "none" {
+				key = "key: " + src
 			}
 			protoTag := ""
 			if p.Protocol() == config.ProtocolOpenAI {

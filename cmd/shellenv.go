@@ -66,16 +66,19 @@ var shellenvCmd = &cobra.Command{
 		}
 
 		preset, _ := presets.Lookup(name)
-		code, err := shellenv.ForProvider(cfg, name, preset)
+		code, authToken, err := shellenv.ForProviderWithToken(cfg, name, preset)
 		if err != nil {
 			if shellenvAnnounce {
 				return err
 			}
 			return nil
 		}
+		if authToken != "" {
+			registerResolvedKeySilent(authToken)
+		}
 		fmt.Fprint(out, code)
 		if shellenvAnnounce {
-			if p.AuthToken() == "" {
+			if authToken == "" {
 				fmt.Fprintf(errOut, "⚠ %s has no auth_token; claude will fall back to OAuth (run: cs edit %s)\n", name, name)
 			}
 			if p.Protocol() == config.ProtocolOpenAI {

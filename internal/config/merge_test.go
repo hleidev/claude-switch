@@ -115,6 +115,17 @@ func TestBuildEnvResolvesSecret(t *testing.T) {
 	if token != "sk-from-env" {
 		t.Errorf("ANTHROPIC_AUTH_TOKEN = %q, want sk-from-env", token)
 	}
+
+	// Missing env var must fail BuildEnv completely so ANTHROPIC_BASE_URL is never half-injected.
+	cMissing := &Config{Providers: map[string]Provider{
+		"broken-env": {
+			"ANTHROPIC_BASE_URL":   "https://third-party.example.com",
+			"ANTHROPIC_AUTH_TOKEN": "env:MISSING_SECRET_VAR_12345",
+		},
+	}}
+	if _, err := cMissing.BuildEnv("broken-env", nil); err == nil {
+		t.Fatal("expected BuildEnv to fail when env secret reference is unset")
+	}
 }
 
 func TestWrapBridgeURL(t *testing.T) {

@@ -76,6 +76,17 @@ var editCmd = &cobra.Command{
 			}
 			return fmt.Errorf("config has invalid TOML; your edits were discarded and the previous config restored: %w", err)
 		}
+		if config.MigrateSecretsToKeychain(&check) {
+			if err := config.Save(&check); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ plaintext key(s) secured in macOS Keychain")
+		}
+		for _, p := range check.Providers {
+			if raw := p.AuthTokenRaw(); raw != "" {
+				registerKeyBestEffort(cmd, raw)
+			}
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "✓ config saved")
 		return nil
 	},

@@ -199,3 +199,28 @@ func TestApplyAddOpenAIProtocolSpecificOverrides(t *testing.T) {
 		t.Errorf("Opus = %q, want o3-high", p[config.OpusModelKey])
 	}
 }
+
+func TestApplyAddUpdateKeyOnlyPreservesCustomFields(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"glm": {
+			config.AuthTokenKey:   "keychain:old-glm",
+			config.ModelKey:       "glm-custom-override",
+			config.SonnetModelKey: "glm-sonnet-custom",
+		},
+	}}
+	opts := addOptions{
+		Name:          "glm",
+		Key:           "env:GLM_API_KEY",
+		UpdateKeyOnly: true,
+	}
+	if err := applyAdd(cfg, opts); err != nil {
+		t.Fatalf("applyAdd UpdateKeyOnly: %v", err)
+	}
+	p := cfg.Providers["glm"]
+	if p.AuthTokenRaw() != "env:GLM_API_KEY" {
+		t.Errorf("AuthTokenRaw = %q, want env:GLM_API_KEY", p.AuthTokenRaw())
+	}
+	if p[config.ModelKey] != "glm-custom-override" || p[config.SonnetModelKey] != "glm-sonnet-custom" {
+		t.Errorf("UpdateKeyOnly wiped existing custom fields: %+v", p)
+	}
+}

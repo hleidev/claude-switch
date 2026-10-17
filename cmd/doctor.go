@@ -54,17 +54,17 @@ var doctorCmd = &cobra.Command{
 		for _, name := range sortedNames(cfg) {
 			p := cfg.Providers[name]
 			raw := p.AuthTokenRaw()
-			kind := secret.DetectKind(raw)
-			keyVal := p.AuthToken()
-			switch kind {
-			case secret.KindKeychain:
-				fmt.Fprintf(out, "%s provider %q has key in macOS Keychain\n", ok(keyVal != ""), name)
-			case secret.KindEnv:
-				fmt.Fprintf(out, "%s provider %q has key via environment (%s)\n", ok(keyVal != ""), name, raw)
-			case secret.KindPlaintext:
-				fmt.Fprintf(out, "%s provider %q has a key (in config.toml)\n", ok(keyVal != ""), name)
+			src := secret.FormatSource(raw)
+			keyVal, keyErr := p.ResolveAuthToken()
+			hasKey := keyErr == nil && keyVal != ""
+			switch {
+			case hasKey:
+				registerResolvedKeySilent(keyVal)
+				fmt.Fprintf(out, "%s provider %q has valid key via %s (%s)\n", ok(true), name, src, secret.Mask(keyVal))
+			case keyErr != nil:
+				fmt.Fprintf(out, "%s provider %q key error (%s): %v\n", ok(false), name, src, keyErr)
 			default:
-				fmt.Fprintf(out, "%s provider %q has a key\n", ok(keyVal != ""), name)
+				fmt.Fprintf(out, "%s provider %q has no key configured\n", ok(false), name)
 			}
 			fmt.Fprintf(out, "%s provider %q resolves a base_url\n", ok(resolvedBaseURL(cfg, name) != ""), name)
 		}

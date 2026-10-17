@@ -97,6 +97,11 @@ func (p Provider) AuthToken() string {
 	return val
 }
 
+// ResolveAuthToken resolves the provider's API key and returns any resolution error.
+func (p Provider) ResolveAuthToken() (string, error) {
+	return secret.Resolve(p[AuthTokenKey])
+}
+
 // BaseURL returns the provider's configured endpoint (empty if it comes from a
 // preset instead).
 func (p Provider) BaseURL() string { return p[BaseURLKey] }
@@ -145,8 +150,11 @@ func SetAutoMigrateKeychain(enabled bool) {
 	autoMigrateKeychain = enabled
 }
 
-func migrateSecretsToKeychain(c *Config) bool {
-	if !autoMigrateKeychain || !secret.DefaultBackend.IsAvailable() {
+// MigrateSecretsToKeychain moves any plaintext AuthToken in c.Providers into
+// the system Keychain (if available) and replaces the provider entry with a
+// "keychain:<provider>" reference. It returns whether any provider was updated.
+func MigrateSecretsToKeychain(c *Config) bool {
+	if !secret.DefaultBackend.IsAvailable() {
 		return false
 	}
 	migrated := false
@@ -164,6 +172,13 @@ func migrateSecretsToKeychain(c *Config) bool {
 		}
 	}
 	return migrated
+}
+
+func migrateSecretsToKeychain(c *Config) bool {
+	if !autoMigrateKeychain {
+		return false
+	}
+	return MigrateSecretsToKeychain(c)
 }
 
 // minimizeProviders removes any provider variable whose stored value already

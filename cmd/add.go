@@ -17,19 +17,19 @@ import (
 )
 
 // addOptions is the resolved input for adding a provider. The interactive
-// addOptions is the resolved input for adding a provider. The interactive
 // prompts and flag parsing both reduce to this struct so the core is testable.
 type addOptions struct {
-	Name        string
-	Protocol    string
-	BaseURL     string // only for custom providers; presets supply their own
-	Model       string
-	SonnetModel string
-	HaikuModel  string
-	OpusModel   string
-	FableModel  string
-	Key         string
-	Force       bool
+	Name          string
+	Protocol      string
+	BaseURL       string // only for custom providers; presets supply their own
+	Model         string
+	SonnetModel   string
+	HaikuModel    string
+	OpusModel     string
+	FableModel    string
+	Key           string
+	Force         bool
+	UpdateKeyOnly bool // preserve existing provider fields and only update the key
 }
 
 // applyAdd validates options and writes the provider into cfg (without saving).
@@ -42,9 +42,33 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 	if opts.Name == "claude" {
 		return fmt.Errorf("claude is the built-in OAuth fallback; it is not a configurable provider")
 	}
-	if _, exists := cfg.Providers[opts.Name]; exists && !opts.Force {
+	existing, exists := cfg.Providers[opts.Name]
+	if exists && !opts.Force && !opts.UpdateKeyOnly {
 		return fmt.Errorf("provider %q already exists (edit it with `cs edit`, or pass --force)", opts.Name)
 	}
+
+	if cfg.Providers == nil {
+		cfg.Providers = map[string]config.Provider{}
+	}
+
+	if exists && opts.UpdateKeyOnly {
+		p := config.Provider{}
+		for k, v := range existing {
+			p[k] = v
+		}
+		if opts.Key != "" {
+			p[config.AuthTokenKey] = opts.Key
+		}
+		if opts.BaseURL != "" {
+			p[config.BaseURLKey] = opts.BaseURL
+		}
+		if opts.Model != "" {
+			p[config.ModelKey] = opts.Model
+		}
+		cfg.Providers[opts.Name] = p
+		return nil
+	}
+
 	_, isPreset := presets.Lookup(opts.Name)
 	if !isPreset && opts.BaseURL == "" {
 		return fmt.Errorf("base_url is required for custom provider %q", opts.Name)
@@ -58,9 +82,6 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 		return fmt.Errorf("unsupported protocol %q (supported: anthropic, openai)", opts.Protocol)
 	}
 
-	if cfg.Providers == nil {
-		cfg.Providers = map[string]config.Provider{}
-	}
 	p := config.Provider{}
 	if opts.BaseURL != "" {
 		p[config.BaseURLKey] = opts.BaseURL
@@ -102,7 +123,6 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 			p[config.FableModelKey] = opts.FableModel
 		}
 	} else {
-
 		if opts.Model != "" {
 			p[config.ModelKey] = opts.Model
 		}
@@ -139,11 +159,12 @@ var (
 	addForce        bool
 	addNoVerify     bool
 	addFromKeychain string
+	addFromEnv      string
 )
 
 var addCmd = &cobra.Command{
 	Use:   "add [provider]",
-	Short: "Add a provider (interactive, or scriptable with --key-stdin)",
+	Short: "Add a provider (interactive, or scriptable with --key-stdin / --from-keychain / --from-env)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runAdd,
 }
@@ -157,33 +178,34 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	var name string
 	if len(args) == 1 {
-		name = args[0]
+		name = strings.TrimSpace(args[0])
 	}
 
-	// Non-interactive path: caller pipes the key in or points to existing keychain item.
-	if addKeyStdin || addFromKeychain != "" {
+	// Non-interactive path: caller pipes the key in or points to an existing keychain/env item.
+	if addKeyStdin || addFromKeychain != "" || addFromEnv != "" {
 		var key string
-		if addFromKeychain != "" {
+		switch {
+		case addFromKeychain != "":
 			key = secret.KeychainRef(addFromKeychain)
 			if secret.DefaultBackend.IsAvailable() {
-				s, a := secret.ParseKeychainRef(key)
-				if _, err := secret.DefaultBackend.Get(s, a); err != nil {
-					return fmt.Errorf("keychain item (%s/%s) not found: %w", s, a, err)
+				if _, err := secret.Resolve(key); err != nil {
+					return err
 				}
 			}
-		} else {
+		case addFromEnv != "":
+			varName := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(addFromEnv), "env:"), "$"))
+			key = "env:" + varName
+			if _, err := secret.Resolve(key); err != nil {
+				return err
+			}
+		default:
 			rawKey, err := readAllStdin(cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
-			if secret.DetectKind(rawKey) == secret.KindPlaintext && secret.DefaultBackend.IsAvailable() {
-				if err := secret.SaveToKeychain(name, rawKey); err == nil {
-					key = secret.KeychainRef(name)
-				} else {
-					key = rawKey
-				}
-			} else {
-				key = rawKey
+			key, err = storeOrValidateKey(name, rawKey, errOut)
+			if err != nil {
+				return err
 			}
 		}
 		opts := addOptions{
@@ -209,7 +231,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isInteractive() {
-		return fmt.Errorf("not a terminal: provide the key non-interactively with --key-stdin (and --base-url for custom providers)")
+		return fmt.Errorf("not a terminal: provide the key non-interactively with --key-stdin, --from-keychain, or --from-env (and --base-url for custom providers)")
 	}
 
 	// Interactive path.
@@ -224,80 +246,66 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("claude is the built-in OAuth fallback; it is not a configurable provider")
 	}
 
-	var key string
+	// Upfront duplicate check: ask how to proceed BEFORE prompting for keys or touching Keychain.
+	force := addForce
+	updateKeyOnly := false
+	if existing, exists := cfg.Providers[name]; exists && !force {
+		const (
+			actUpdateKey = "update_key"
+			actOverwrite = "overwrite"
+			actCancel    = "cancel"
+		)
+		var action string
+		menuOpts := []huh.Option[string]{
+			huh.NewOption("Update API key only (keep existing URL & model settings)", actUpdateKey),
+			huh.NewOption("Reconfigure provider from scratch (overwrite)", actOverwrite),
+			huh.NewOption("Cancel", actCancel),
+		}
+		if err := huh.NewSelect[string]().
+			Title(fmt.Sprintf("Provider %q already exists. What would you like to do?", name)).
+			Options(menuOpts...).
+			Value(&action).
+			Run(); err != nil {
+			return err
+		}
+		switch action {
+		case actCancel:
+			fmt.Fprintln(errOut, "aborted")
+			return nil
+		case actUpdateKey:
+			updateKeyOnly = true
+			force = true
+			if customURL == "" {
+				customURL = existing.UpstreamBaseURL()
+			}
+		case actOverwrite:
+			force = true
+		}
+	}
+
+	// If adding/overwriting a custom provider named on the CLI (e.g. `cs add my-relay`),
+	// collect protocol, base_url, and model if not already provided via flags.
+	_, isPreset := presets.Lookup(name)
+	if !isPreset && !updateKeyOnly && customURL == "" && addBaseURL == "" {
+		customURL, customProto, customModel, err = promptCustomProviderDetails()
+		if err != nil {
+			return err
+		}
+	}
+
 	effectiveBaseURL := customURL
+	if effectiveBaseURL == "" {
+		effectiveBaseURL = addBaseURL
+	}
 	if effectiveBaseURL == "" {
 		if preset, ok := presets.Lookup(name); ok {
 			effectiveBaseURL = preset[config.BaseURLKey]
 		}
 	}
 
-	// 1. Smart check: check if a key exists in Keychain (exact match or from other tools).
-	if match, exists := secret.DetectKeychainSmart(name, effectiveBaseURL); exists {
-		var promptMsg string
-		if match.Service == secret.DefaultService {
-			promptMsg = fmt.Sprintf("Existing key for %s found in macOS Keychain. Reuse it?", name)
-		} else {
-			promptMsg = fmt.Sprintf("Found existing Keychain item %q (from other tools). Reuse it?", match.Service+"/"+match.Account)
-		}
-		reuse, err := confirmWithDefault(promptMsg, true)
-		if err != nil {
-			return err
-		}
-		if reuse {
-			key = match.Ref()
-		}
-	}
-
-	// 2. If not reused, check if an environment variable exists.
-	if key == "" {
-		if envVar, envVal, found := secret.DetectEnv(name); found {
-			useEnv, err := confirmWithDefault(fmt.Sprintf("Found $%s in environment. Import to macOS Keychain?", envVar), true)
-			if err != nil {
-				return err
-			}
-			if useEnv {
-				if secret.DefaultBackend.IsAvailable() {
-					if err := secret.SaveToKeychain(name, envVal); err != nil {
-						return fmt.Errorf("save to keychain: %w", err)
-					}
-					key = secret.KeychainRef(name)
-				} else {
-					key = "env:" + envVar
-				}
-			}
-		}
-	}
-
-	// 3. Otherwise prompt for key input (allows pasting raw key or entering keychain:service/account).
-	if key == "" {
-		promptTitle := fmt.Sprintf("Paste API key for %s (or enter keychain:service/account)", name)
-		inputKey, err := readSecret(promptTitle)
-		if err != nil {
-			return err
-		}
-		inputKey = strings.TrimSpace(inputKey)
-		if inputKey == "" {
-			return fmt.Errorf("no key entered")
-		}
-		if strings.HasPrefix(inputKey, "keychain:") {
-			s, a := secret.ParseKeychainRef(inputKey)
-			if _, err := secret.DefaultBackend.Get(s, a); err != nil {
-				return fmt.Errorf("keychain item (%s/%s) not found: %w", s, a, err)
-			}
-			key = inputKey
-		} else if secret.DetectKind(inputKey) != secret.KindPlaintext {
-			key = inputKey
-		} else if secret.DefaultBackend.IsAvailable() {
-			if err := secret.SaveToKeychain(name, inputKey); err != nil {
-				fmt.Fprintf(errOut, "⚠ could not save to keychain (%v); saving to config\n", err)
-				key = inputKey
-			} else {
-				key = secret.KeychainRef(name)
-			}
-		} else {
-			key = inputKey
-		}
+	key, err := promptProviderKey(name, effectiveBaseURL, errOut)
+	if err != nil {
+		return err
 	}
 
 	proto := addProtocol
@@ -310,18 +318,19 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := addOptions{
-		Name:        name,
-		Protocol:    proto,
-		BaseURL:     addBaseURL,
-		Model:       model,
-		SonnetModel: addSonnetModel,
-		HaikuModel:  addHaikuModel,
-		OpusModel:   addOpusModel,
-		FableModel:  addFableModel,
-		Key:         key,
-		Force:       addForce,
+		Name:          name,
+		Protocol:      proto,
+		BaseURL:       addBaseURL,
+		Model:         model,
+		SonnetModel:   addSonnetModel,
+		HaikuModel:    addHaikuModel,
+		OpusModel:     addOpusModel,
+		FableModel:    addFableModel,
+		Key:           key,
+		Force:         force,
+		UpdateKeyOnly: updateKeyOnly,
 	}
-	if customURL != "" {
+	if customURL != "" && !updateKeyOnly {
 		opts.BaseURL = customURL
 	}
 	if err := applyAdd(cfg, opts); err != nil {
@@ -333,6 +342,128 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(errOut)
 	finishAdd(cmd, opts)
 	return nil
+}
+
+// promptProviderKey scans Keychain and environment variables for candidate keys.
+// If any candidates are found, it presents a unified selector menu with masked
+// fingerprints alongside options to paste a new key or enter a reference URI.
+// If no candidates are found, it goes straight to key input.
+func promptProviderKey(name, effectiveBaseURL string, errOut io.Writer) (string, error) {
+	kcMatches := secret.DetectKeychainAll(name, effectiveBaseURL)
+	envMatches := secret.DetectEnvAll(name)
+
+	const (
+		choicePasteNew = "__paste_new__"
+		choiceEnterRef = "__enter_ref__"
+	)
+
+	if len(kcMatches) > 0 || len(envMatches) > 0 {
+		var options []huh.Option[string]
+		envValues := map[string]string{}
+
+		for _, m := range kcMatches {
+			var label string
+			if m.Service == secret.DefaultService && m.Account == name {
+				label = fmt.Sprintf("Reuse Keychain item: %s (%s)", m.DisplayName(), secret.Mask(m.Secret))
+			} else {
+				label = fmt.Sprintf("Reuse external Keychain item: %s (%s)", m.DisplayName(), secret.Mask(m.Secret))
+			}
+			options = append(options, huh.NewOption(label, "ref:"+m.Ref()))
+		}
+
+		for _, em := range envMatches {
+			envValues[em.Name] = em.Value
+			dynLabel := fmt.Sprintf("Reference env var dynamically: $%s (%s)", em.Name, secret.Mask(em.Value))
+			options = append(options, huh.NewOption(dynLabel, "ref:"+em.Ref()))
+			if secret.DefaultBackend.IsAvailable() {
+				impLabel := fmt.Sprintf("Copy $%s value into macOS Keychain (%s)", em.Name, secret.Mask(em.Value))
+				options = append(options, huh.NewOption(impLabel, "import_env:"+em.Name))
+			}
+		}
+
+		options = append(options,
+			huh.NewOption("Paste a new API key (masked input)", choicePasteNew),
+			huh.NewOption("Enter a secret reference (env:... / keychain:... / op://... / cmd:...)", choiceEnterRef),
+		)
+
+		var selected string
+		if err := huh.NewSelect[string]().
+			Title(fmt.Sprintf("Configure API key for %s", name)).
+			Options(options...).
+			Value(&selected).
+			Run(); err != nil {
+			return "", err
+		}
+
+		switch {
+		case strings.HasPrefix(selected, "ref:"):
+			return strings.TrimPrefix(selected, "ref:"), nil
+		case strings.HasPrefix(selected, "import_env:"):
+			varName := strings.TrimPrefix(selected, "import_env:")
+			val := envValues[varName]
+			if err := secret.SaveToKeychain(name, val); err != nil {
+				return "", fmt.Errorf("save to keychain: %w", err)
+			}
+			return secret.KeychainRef(name), nil
+		case selected == choiceEnterRef:
+			return promptReferenceInput(name, errOut)
+		}
+	}
+
+	// Direct secret input (when no candidates exist, or user selected "Paste a new API key").
+	promptTitle := fmt.Sprintf("Paste API key for %s (or type 'ref' to enter an env:/keychain:/op:// reference)", name)
+	inputKey, err := readSecret(promptTitle)
+	if err != nil {
+		return "", err
+	}
+	inputKey = strings.TrimSpace(inputKey)
+	if inputKey == "" {
+		return "", fmt.Errorf("no key entered")
+	}
+	if strings.EqualFold(inputKey, "ref") {
+		return promptReferenceInput(name, errOut)
+	}
+	return storeOrValidateKey(name, inputKey, errOut)
+}
+
+// promptReferenceInput prompts with visible text input for a secret reference URI.
+func promptReferenceInput(name string, errOut io.Writer) (string, error) {
+	ref, err := readLine(
+		fmt.Sprintf("Secret reference for %s", name),
+		"env:MY_API_KEY, keychain:service/account, op://vault/item/field, or cmd:...",
+	)
+	if err != nil {
+		return "", err
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("no secret reference entered")
+	}
+	return storeOrValidateKey(name, ref, errOut)
+}
+
+// storeOrValidateKey validates a secret reference (env:, keychain:, op://, cmd:)
+// or stores a plaintext key into macOS Keychain when available.
+func storeOrValidateKey(name, rawInput string, errOut io.Writer) (string, error) {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" {
+		return "", fmt.Errorf("no key entered")
+	}
+	kind := secret.DetectKind(rawInput)
+	if kind != secret.KindPlaintext {
+		if _, err := secret.Resolve(rawInput); err != nil {
+			return "", err
+		}
+		return rawInput, nil
+	}
+	if secret.DefaultBackend.IsAvailable() {
+		if err := secret.SaveToKeychain(name, rawInput); err != nil {
+			fmt.Fprintf(errOut, "⚠ could not save to keychain (%v); saving to config\n", err)
+			return rawInput, nil
+		}
+		return secret.KeychainRef(name), nil
+	}
+	return rawInput, nil
 }
 
 // finishAdd runs the post-write side effects: connectivity probe, key
@@ -364,8 +495,11 @@ func finishAdd(cmd *cobra.Command, opts addOptions) {
 	registered := registerKeyBestEffort(cmd, opts.Key)
 
 	fmt.Fprintf(out, "✓ wrote '%s' → %s\n", opts.Name, path)
-	if secret.DetectKind(opts.Key) == secret.KindKeychain {
-		fmt.Fprintln(out, "✓ key secured in macOS Keychain")
+	switch secret.DetectKind(opts.Key) {
+	case secret.KindKeychain:
+		fmt.Fprintf(out, "✓ key secured via %s\n", secret.FormatSource(opts.Key))
+	case secret.KindEnv, secret.KindOnePassword, secret.KindCommand:
+		fmt.Fprintf(out, "✓ key linked dynamically via %s\n", secret.FormatSource(opts.Key))
 	}
 	if opts.Protocol == config.ProtocolOpenAI {
 		fmt.Fprintf(out, "✓ protocol: openai (Opus: %s, Sonnet: %s, Haiku: %s, Fable: %s via bridge :8088)\n",
@@ -418,6 +552,15 @@ func pickProvider() (name, baseURL, protocol, model string, err error) {
 		return "", "", "", "", fmt.Errorf("provider name is required")
 	}
 
+	baseURL, protocol, model, err = promptCustomProviderDetails()
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return name, baseURL, protocol, model, nil
+}
+
+// promptCustomProviderDetails prompts interactively for protocol, base_url, and model.
+func promptCustomProviderDetails() (baseURL, protocol, model string, err error) {
 	protocol = addProtocol
 	if protocol == "" || protocol == config.ProtocolAnthropic {
 		protoOpts := []huh.Option[string]{
@@ -425,7 +568,7 @@ func pickProvider() (name, baseURL, protocol, model string, err error) {
 			huh.NewOption("openai (Codex / OpenAI-compatible -> via bridge)", config.ProtocolOpenAI),
 		}
 		if err := huh.NewSelect[string]().Title("Protocol").Options(protoOpts...).Value(&protocol).Run(); err != nil {
-			return "", "", "", "", err
+			return "", "", "", err
 		}
 	}
 
@@ -434,7 +577,7 @@ func pickProvider() (name, baseURL, protocol, model string, err error) {
 		baseURL = addBaseURL
 	} else {
 		if err := huh.NewInput().Title("base_url").Value(&baseURL).Run(); err != nil {
-			return "", "", "", "", err
+			return "", "", "", err
 		}
 		baseURL = strings.TrimSpace(baseURL)
 	}
@@ -445,7 +588,7 @@ func pickProvider() (name, baseURL, protocol, model string, err error) {
 		} else {
 			model = config.DefaultOpenAIModel
 			if err := huh.NewInput().Title("Model (default: " + config.DefaultOpenAIModel + ")").Value(&model).Run(); err != nil {
-				return "", "", "", "", err
+				return "", "", "", err
 			}
 			model = strings.TrimSpace(model)
 			if model == "" {
@@ -453,8 +596,7 @@ func pickProvider() (name, baseURL, protocol, model string, err error) {
 			}
 		}
 	}
-
-	return name, baseURL, protocol, model, nil
+	return baseURL, protocol, model, nil
 }
 
 func readAllStdin(r io.Reader) (string, error) {
@@ -467,7 +609,7 @@ func readAllStdin(r io.Reader) (string, error) {
 }
 
 func init() {
-	addCmd.Flags().BoolVar(&addKeyStdin, "key-stdin", false, "read the API key from stdin (non-interactive)")
+	addCmd.Flags().BoolVar(&addKeyStdin, "key-stdin", false, "read the API key or secret reference from stdin (non-interactive)")
 	addCmd.Flags().StringVar(&addBaseURL, "base-url", "", "API base URL (required for custom providers)")
 	addCmd.Flags().StringVar(&addProtocol, "protocol", "anthropic", "protocol type: 'anthropic' (default) or 'openai'")
 	addCmd.Flags().StringVar(&addModel, "model", "", "model name (applies to all 4 Claude roles if specific role flags omitted)")
@@ -478,5 +620,6 @@ func init() {
 	addCmd.Flags().BoolVar(&addForce, "force", false, "overwrite an existing provider")
 	addCmd.Flags().BoolVar(&addNoVerify, "no-verify", false, "skip the connectivity check")
 	addCmd.Flags().StringVar(&addFromKeychain, "from-keychain", "", "reuse existing Keychain item (account or service/account)")
+	addCmd.Flags().StringVar(&addFromEnv, "from-env", "", "reference an environment variable dynamically (e.g. CODERPLAN_API_KEY)")
 	rootCmd.AddCommand(addCmd)
 }

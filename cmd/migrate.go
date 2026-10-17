@@ -104,6 +104,7 @@ var migrateCmd = &cobra.Command{
 			}
 		}
 
+		config.MigrateSecretsToKeychain(cfg)
 		if err := config.Save(cfg); err != nil {
 			return err
 		}

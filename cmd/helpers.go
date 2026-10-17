@@ -12,12 +12,14 @@ import (
 	"github.com/hleidev/claude-switch/internal/secret"
 )
 
-// registerKeyBestEffort registers a key into ~/.claude.json, warning (not
-// failing) on error. It returns whether the file was actually updated.
+// registerKeyBestEffort resolves a key reference and registers the real key's
+// trailing suffix into ~/.claude.json, warning (not failing) on error. It
+// returns whether the file was actually updated. If the key reference cannot
+// be resolved, it does NOT register the raw reference string.
 func registerKeyBestEffort(cmd *cobra.Command, key string) bool {
 	realKey, err := secret.Resolve(key)
 	if err != nil || realKey == "" {
-		realKey = key
+		return false
 	}
 	path, err := claudejson.DefaultPath()
 	if err != nil {
@@ -29,6 +31,19 @@ func registerKeyBestEffort(cmd *cobra.Command, key string) bool {
 		return false
 	}
 	return registered
+}
+
+// registerResolvedKeySilent ensures an already-resolved secret key suffix is
+// approved in ~/.claude.json without extra secret resolution or noisy output.
+func registerResolvedKeySilent(realKey string) {
+	if realKey == "" {
+		return
+	}
+	path, err := claudejson.DefaultPath()
+	if err != nil {
+		return
+	}
+	_, _ = claudejson.RegisterKey(path, realKey)
 }
 
 // resolvedBaseURL returns the effective ANTHROPIC_BASE_URL for a provider,
