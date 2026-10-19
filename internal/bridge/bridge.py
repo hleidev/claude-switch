@@ -15,6 +15,7 @@ import logging
 from typing import Optional
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 import uvicorn
 import litellm
 from litellm.llms.anthropic.pass_through.adapters.transformation import AnthropicAdapter
@@ -164,27 +165,29 @@ async def route_request(request: Request, full_path: str):
         if "tool_choice" in openai_params and openai_params["tool_choice"]:
             kwargs["tool_choice"] = openai_params["tool_choice"]
 
-        logger.info("Dispatching to litellm.completion (stream=%s)...", is_stream)
-        response = litellm.completion(**kwargs)
-
         out_model = incoming_model if incoming_model else target_model
+        logger.info("Dispatching to litellm.acompletion (stream=%s)...", is_stream)
         if is_stream:
+            response = await litellm.acompletion(**kwargs)
             anthropic_stream = adapter.translate_completion_output_params_streaming(
                 response,
                 model=out_model,
-                is_async=False
+                is_async=True
             )
-            def stream_generator():
+            async def stream_generator():
                 try:
-                    for chunk in anthropic_stream:
+                    async for chunk in anthropic_stream:
                         if chunk:
-                            yield chunk
+                            if isinstance(chunk, str):
+                                yield chunk.encode("utf-8")
+                            else:
+                                yield chunk
                 except Exception as e:
                     logger.error("Error streaming completion: %s", e, exc_info=True)
                     # HTTP headers have already been sent; report the error as
                     # an Anthropic SSE event instead of dropping the connection.
                     _, payload = completion_error(e)
-                    yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+                    yield f"event: error\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
 
             return StreamingResponse(
                 stream_generator(),
@@ -196,6 +199,7 @@ async def route_request(request: Request, full_path: str):
                 }
             )
         else:
+            response = await litellm.acompletion(**kwargs)
             anthropic_resp = adapter.translate_completion_output_params(response)
             anthropic_resp["model"] = out_model
             return JSONResponse(content=anthropic_resp)
@@ -206,5 +210,20 @@ async def route_request(request: Request, full_path: str):
         return JSONResponse(status_code=status, content=payload)
 
 if __name__ == "__main__":
+    import sys
+    import fcntl
+
     port = int(os.environ.get("BRIDGE_PORT", "8088"))
+    lock_path = os.environ.get("BRIDGE_LOCK_PATH")
+    lock_file = None
+    if lock_path:
+        try:
+            os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+            lock_file = open(lock_path, "a")
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError) as e:
+            logger.error("Another bridge daemon is holding lock %s: %s", lock_path, e)
+            sys.stderr.write(f"ERROR: bridge daemon lock already held ({e})\n")
+            sys.exit(48)
+
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

@@ -1,6 +1,8 @@
+import asyncio
 import json
+import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import litellm
 from fastapi.testclient import TestClient
@@ -38,7 +40,7 @@ class BridgeErrorTests(unittest.TestCase):
                     model="gpt-6.1-sol",
                     llm_provider="openai",
                 )
-                with patch.object(bridge.litellm, "completion", side_effect=error), \
+                with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, side_effect=error), \
                         self.assertLogs(bridge.logger, level="ERROR"):
                     response = self.request()
                 self.assertEqual(response.status_code, status)
@@ -47,25 +49,25 @@ class BridgeErrorTests(unittest.TestCase):
                 self.assertIn("Upstream rejected request", response.json()["error"]["message"])
 
     def test_unexpected_error_remains_500(self):
-        with patch.object(bridge.litellm, "completion", side_effect=RuntimeError("broken")), \
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, side_effect=RuntimeError("broken")), \
                 self.assertLogs(bridge.logger, level="ERROR"):
             response = self.request()
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json()["error"]["type"], "api_error")
 
     def test_stream_failure_emits_anthropic_error_event(self):
-        def chunks():
-            yield 'event: message_start\ndata: {}\n\n'
+        async def chunks():
+            yield b'event: message_start\ndata: {}\n\n'
             raise litellm.NotFoundError(
                 message="Model not found", model="gpt-6.1-sol", llm_provider="openai"
             )
 
         self.body["stream"] = True
-        with patch.object(bridge.litellm, "completion") as completion, \
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as acompletion, \
                 patch.object(bridge.adapter, "translate_completion_output_params_streaming", return_value=chunks()), \
                 self.assertLogs(bridge.logger, level="ERROR"):
             response = self.request()
-        self.assertEqual(completion.call_args.kwargs["stream_options"], {"include_usage": True})
+        self.assertEqual(acompletion.call_args.kwargs["stream_options"], {"include_usage": True})
         self.assertEqual(response.status_code, 200)
         self.assertIn("event: message_start", response.text)
         self.assertIn("event: error", response.text)
@@ -78,12 +80,83 @@ class BridgeErrorTests(unittest.TestCase):
             choices=[{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
             usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
         )
-        with patch.object(bridge.litellm, "completion", return_value=completion) as call:
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, return_value=completion) as call:
             response = self.request()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(call.call_args.kwargs["model"], "openai/gpt-6.1-sol")
         self.assertEqual(response.json()["model"], "gpt-6.1-sol[1m]")
         self.assertEqual(response.json()["content"][0]["text"], "OK")
+
+
+class BridgeConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_responds_while_upstream_completion_is_blocked(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_completion(**kwargs):
+            started.set()
+            await release.wait()
+            raise RuntimeError("upstream released")
+
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            with patch.object(bridge.litellm, "acompletion", side_effect=blocked_completion):
+                request = asyncio.create_task(client.post(
+                    "/https/example.com/v1/messages",
+                    headers={"x-api-key": "test-token"},
+                    json={"model": "test", "messages": [{"role": "user", "content": "OK"}], "stream": False},
+                ))
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=1.0)
+                    self.assertFalse(request.done(), "completion must still be waiting")
+                    response = await asyncio.wait_for(client.get("/health"), timeout=0.1)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertFalse(request.done(), "health must respond before completion finishes")
+                finally:
+                    release.set()
+                    await request
+
+    async def test_health_responds_while_stream_is_actively_slow(self):
+        chunk_event = asyncio.Event()
+        finish_event = asyncio.Event()
+
+        async def slow_stream():
+            yield b'event: message_start\ndata: {}\n\n'
+            chunk_event.set()
+            await finish_event.wait()
+            yield b'event: message_stop\ndata: {}\n\n'
+
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock), \
+                 patch.object(bridge.adapter, "translate_completion_output_params_streaming", return_value=slow_stream()):
+                
+                async def consume_stream():
+                    async with client.stream(
+                        "POST",
+                        "/https/example.com/v1/messages",
+                        headers={"x-api-key": "test-token"},
+                        json={"model": "test", "messages": [{"role": "user", "content": "OK"}], "stream": True},
+                    ) as resp:
+                        async for _ in resp.aiter_bytes():
+                            pass
+
+                stream_task = asyncio.create_task(consume_stream())
+                try:
+                    await asyncio.wait_for(chunk_event.wait(), timeout=1.0)
+                    # While stream is waiting, health check must respond fast!
+                    response = await asyncio.wait_for(client.get("/health"), timeout=0.05)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertFalse(stream_task.done())
+                finally:
+                    finish_event.set()
+                    await stream_task
 
 
 if __name__ == "__main__":
