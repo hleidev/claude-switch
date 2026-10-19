@@ -61,10 +61,11 @@ class BridgeErrorTests(unittest.TestCase):
             )
 
         self.body["stream"] = True
-        with patch.object(bridge.litellm, "completion"), \
+        with patch.object(bridge.litellm, "completion") as completion, \
                 patch.object(bridge.adapter, "translate_completion_output_params_streaming", return_value=chunks()), \
                 self.assertLogs(bridge.logger, level="ERROR"):
             response = self.request()
+        self.assertEqual(completion.call_args.kwargs["stream_options"], {"include_usage": True})
         self.assertEqual(response.status_code, 200)
         self.assertIn("event: message_start", response.text)
         self.assertIn("event: error", response.text)

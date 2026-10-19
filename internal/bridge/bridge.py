@@ -157,6 +157,8 @@ async def route_request(request: Request, full_path: str):
             "temperature": anthropic_body.get("temperature", 1.0),
             "max_tokens": anthropic_body.get("max_tokens", 8192),
         }
+        if is_stream:
+            kwargs["stream_options"] = {"include_usage": True}
         if "tools" in openai_params and openai_params["tools"]:
             kwargs["tools"] = openai_params["tools"]
         if "tool_choice" in openai_params and openai_params["tool_choice"]:
