@@ -73,8 +73,13 @@ cs() {
       echo "usage: cs use <provider|claude>" >&2
       return 2
     fi
-    _cs_unset_managed
-    eval "$(command cs __shellenv --announce "$@")"
+    local _cs_code
+    if _cs_code="$(command cs __shellenv --announce "$@")"; then
+      _cs_unset_managed
+      eval "$_cs_code"
+    else
+      return $?
+    fi
   else
     command cs "$@"
   fi

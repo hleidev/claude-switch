@@ -31,6 +31,27 @@ adapter = AnthropicAdapter()
 
 DEFAULT_FALLBACK_MODEL = "gpt-6.1-sol"
 
+
+def completion_error(error: Exception) -> tuple[int, dict]:
+    status = getattr(error, "status_code", None)
+    if not isinstance(status, int) or not 400 <= status <= 599:
+        status = 500
+    error_type = {
+        400: "invalid_request_error",
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+        413: "request_too_large",
+        422: "invalid_request_error",
+        429: "rate_limit_error",
+        529: "overloaded_error",
+    }.get(status, "api_error")
+    return status, {
+        "type": "error",
+        "error": {"type": error_type, "message": str(error)},
+    }
+
+
 def parse_upstream_target(path: str) -> tuple[str, str]:
     """
     Extracts the upstream base URL and the sub-endpoint from the incoming path.
@@ -152,9 +173,16 @@ async def route_request(request: Request, full_path: str):
                 is_async=False
             )
             def stream_generator():
-                for chunk in anthropic_stream:
-                    if chunk:
-                        yield chunk
+                try:
+                    for chunk in anthropic_stream:
+                        if chunk:
+                            yield chunk
+                except Exception as e:
+                    logger.error("Error streaming completion: %s", e, exc_info=True)
+                    # HTTP headers have already been sent; report the error as
+                    # an Anthropic SSE event instead of dropping the connection.
+                    _, payload = completion_error(e)
+                    yield f"event: error\ndata: {json.dumps(payload)}\n\n"
 
             return StreamingResponse(
                 stream_generator(),
@@ -166,15 +194,14 @@ async def route_request(request: Request, full_path: str):
                 }
             )
         else:
-            anthropic_resp = adapter.translate_completion_output_params(response, model=out_model)
+            anthropic_resp = adapter.translate_completion_output_params(response)
+            anthropic_resp["model"] = out_model
             return JSONResponse(content=anthropic_resp)
 
     except Exception as e:
         logger.error("Error executing completion: %s", e, exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"type": "error", "error": {"type": "api_error", "message": str(e)}}
-        )
+        status, payload = completion_error(e)
+        return JSONResponse(status_code=status, content=payload)
 
 if __name__ == "__main__":
     port = int(os.environ.get("BRIDGE_PORT", "8088"))

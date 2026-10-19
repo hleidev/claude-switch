@@ -137,6 +137,8 @@ func Start(foreground bool, port int) error {
 
 	cmd := exec.Command(uvPath, "run", script)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("BRIDGE_PORT=%d", port))
+	// Keep the daemon alive when its launching terminal session exits.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = out
 	cmd.Stderr = out
 

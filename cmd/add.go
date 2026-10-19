@@ -345,67 +345,55 @@ func runAdd(cmd *cobra.Command, args []string) error {
 }
 
 // promptProviderKey scans Keychain and environment variables for candidate keys.
-// If any candidates are found, it presents a unified selector menu with masked
-// fingerprints alongside options to paste a new key or enter a reference URI.
-// If no candidates are found, it goes straight to key input.
+// The first screen stays focused on the three decisions most users need; the
+// individual candidates are shown only after choosing to reuse an existing key.
 func promptProviderKey(name, effectiveBaseURL string, errOut io.Writer) (string, error) {
 	kcMatches := secret.DetectKeychainAll(name, effectiveBaseURL)
 	envMatches := secret.DetectEnvAll(name)
 
 	const (
-		choicePasteNew = "__paste_new__"
-		choiceEnterRef = "__enter_ref__"
+		choiceSelectExisting = "__select_existing__"
+		choicePasteNew       = "__paste_new__"
+		choiceEnterRef       = "__enter_ref__"
 	)
 
 	if len(kcMatches) > 0 || len(envMatches) > 0 {
+		// The provider's own item is the least surprising default. Ask about it
+		// directly so users do not have to understand Keychain naming conventions.
+		if len(kcMatches) > 0 && kcMatches[0].Service == secret.DefaultService && kcMatches[0].Account == name {
+			useSaved, err := confirmWithDefault(
+				fmt.Sprintf("Use the saved API key for %s? (%s)", name, secret.Mask(kcMatches[0].Secret)),
+				true,
+			)
+			if err != nil {
+				return "", err
+			}
+			if useSaved {
+				return kcMatches[0].Ref(), nil
+			}
+		}
+
 		var options []huh.Option[string]
-		envValues := map[string]string{}
-
-		for _, m := range kcMatches {
-			var label string
-			if m.Service == secret.DefaultService && m.Account == name {
-				label = fmt.Sprintf("Reuse Keychain item: %s (%s)", m.DisplayName(), secret.Mask(m.Secret))
-			} else {
-				label = fmt.Sprintf("Reuse external Keychain item: %s (%s)", m.DisplayName(), secret.Mask(m.Secret))
-			}
-			options = append(options, huh.NewOption(label, "ref:"+m.Ref()))
-		}
-
-		for _, em := range envMatches {
-			envValues[em.Name] = em.Value
-			dynLabel := fmt.Sprintf("Reference env var dynamically: $%s (%s)", em.Name, secret.Mask(em.Value))
-			options = append(options, huh.NewOption(dynLabel, "ref:"+em.Ref()))
-			if secret.DefaultBackend.IsAvailable() {
-				impLabel := fmt.Sprintf("Copy $%s value into macOS Keychain (%s)", em.Name, secret.Mask(em.Value))
-				options = append(options, huh.NewOption(impLabel, "import_env:"+em.Name))
-			}
-		}
-
+		available := len(kcMatches) + len(envMatches)
 		options = append(options,
-			huh.NewOption("Paste a new API key (masked input)", choicePasteNew),
-			huh.NewOption("Enter a secret reference (env:... / keychain:... / op://... / cmd:...)", choiceEnterRef),
+			huh.NewOption(fmt.Sprintf("Choose an existing key (%d available)", available), choiceSelectExisting),
+			huh.NewOption("Paste a new API key", choicePasteNew),
+			huh.NewOption("Enter a secret reference (advanced)", choiceEnterRef),
 		)
 
 		var selected string
 		if err := huh.NewSelect[string]().
-			Title(fmt.Sprintf("Configure API key for %s", name)).
+			Title(fmt.Sprintf("How should %s authenticate?", name)).
 			Options(options...).
 			Value(&selected).
 			Run(); err != nil {
 			return "", err
 		}
 
-		switch {
-		case strings.HasPrefix(selected, "ref:"):
-			return strings.TrimPrefix(selected, "ref:"), nil
-		case strings.HasPrefix(selected, "import_env:"):
-			varName := strings.TrimPrefix(selected, "import_env:")
-			val := envValues[varName]
-			if err := secret.SaveToKeychain(name, val); err != nil {
-				return "", fmt.Errorf("save to keychain: %w", err)
-			}
-			return secret.KeychainRef(name), nil
-		case selected == choiceEnterRef:
+		switch selected {
+		case choiceSelectExisting:
+			return promptExistingProviderKey(name, kcMatches, envMatches)
+		case choiceEnterRef:
 			return promptReferenceInput(name, errOut)
 		}
 	}
@@ -424,6 +412,61 @@ func promptProviderKey(name, effectiveBaseURL string, errOut io.Writer) (string,
 		return promptReferenceInput(name, errOut)
 	}
 	return storeOrValidateKey(name, inputKey, errOut)
+}
+
+// promptExistingProviderKey shows the detailed candidates only after the user
+// has chosen the existing-key path. Environment values remain dynamic by
+// default; users can opt into copying one into the managed Keychain item.
+func promptExistingProviderKey(name string, kcMatches []*secret.KeychainMatch, envMatches []secret.EnvMatch) (string, error) {
+	var options []huh.Option[string]
+	for _, m := range kcMatches {
+		options = append(options, huh.NewOption(
+			fmt.Sprintf("%s (%s)", m.DisplayName(), secret.Mask(m.Secret)),
+			m.Ref(),
+		))
+	}
+	for _, em := range envMatches {
+		options = append(options, huh.NewOption(
+			fmt.Sprintf("$%s (dynamic, %s)", em.Name, secret.Mask(em.Value)),
+			"env:"+em.Name,
+		))
+	}
+
+	var selected string
+	if err := huh.NewSelect[string]().
+		Title("Choose the API key to use").
+		Options(options...).
+		Value(&selected).
+		Run(); err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(selected, "keychain:") {
+		return selected, nil
+	}
+
+	varName := strings.TrimPrefix(selected, "env:")
+	for _, em := range envMatches {
+		if em.Name != varName {
+			continue
+		}
+		if secret.DefaultBackend.IsAvailable() {
+			copyToKeychain, err := confirmWithDefault(
+				fmt.Sprintf("Save a copy of $%s in Keychain for future use?", varName),
+				false,
+			)
+			if err != nil {
+				return "", err
+			}
+			if copyToKeychain {
+				if err := secret.SaveToKeychain(name, em.Value); err != nil {
+					return "", fmt.Errorf("save to keychain: %w", err)
+				}
+				return secret.KeychainRef(name), nil
+			}
+		}
+		return em.Ref(), nil
+	}
+	return "", fmt.Errorf("selected secret candidate is no longer available")
 }
 
 // promptReferenceInput prompts with visible text input for a secret reference URI.

@@ -28,6 +28,9 @@ var shellenvCmd = &cobra.Command{
 
 		cfg, err := config.Load()
 		if err != nil {
+			if shellenvAnnounce {
+				return fmt.Errorf("load config: %w", err)
+			}
 			// Startup safety: never emit stdout on error.
 			fmt.Fprintln(errOut, "claude-switch: config error:", err)
 			return nil
@@ -60,8 +63,10 @@ var shellenvCmd = &cobra.Command{
 		if p.Protocol() == config.ProtocolOpenAI {
 			if err := bridge.EnsureRunning(); err != nil {
 				if shellenvAnnounce {
-					fmt.Fprintf(errOut, "⚠ bridge warning: %v\n", err)
+					return fmt.Errorf("start OpenAI bridge: %w", err)
 				}
+				fmt.Fprintln(errOut, "claude-switch: OpenAI bridge error:", err)
+				return nil
 			}
 		}
 
@@ -86,6 +91,7 @@ var shellenvCmd = &cobra.Command{
 			} else {
 				fmt.Fprintf(errOut, "✓ switched to %s\n", name)
 			}
+			fmt.Fprintln(errOut, "  Restart any running Claude sessions to apply the updated settings.")
 		}
 		return nil
 	},
