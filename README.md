@@ -224,13 +224,24 @@ make vet              # go vet ./...
 |---|---|
 | `main.go` | Entry point; reads `main.version` and hands off to `cmd` |
 | `cmd/` | Cobra subcommand implementations (`add`, `use`, `setup`, …) |
+| `internal/bridge` | Embedded OpenAI-to-Anthropic translation bridge daemon and contract tests |
 | `internal/claudejson` | Reads/writes `~/.claude/.credentials.json` for OAuth re-registration |
 | `internal/config` | Parses `config.toml`, providers, defaults |
 | `internal/migrate` | One-shot importer for the legacy `~/.claude-switch/` layout |
 | `internal/presets` | Built-in provider templates (model names, base URLs) |
+| `internal/secret` | macOS Keychain & environment variable credential resolution |
 | `internal/shellenv` | Env-var merge + `init zsh` / `init bash` snippets |
 | `.goreleaser.yaml` | GoReleaser config; a tagged push builds binaries and updates the [Homebrew tap](https://github.com/hleidev/homebrew-claude-switch) |
 | `Makefile` | `build` / `test` / `install` / `uninstall` / `fmt` / `vet` / `clean` |
+
+## Acknowledgments
+
+`claude-switch` relies on and is grateful to the following open-source projects:
+
+- **[LiteLLM](https://github.com/BerriAI/litellm)** — Powers the protocol translation bridge, providing Anthropic Messages adapter pipelines, reasoning parameter mappings, and token counting.
+- **[uv](https://github.com/astral-sh/uv)** — Enables fast, self-contained execution of the embedded Python bridge daemon with zero virtualenv management.
+- **[FastAPI](https://fastapi.tiangolo.com/)** & **[Uvicorn](https://www.uvicorn.org/)** — Drive the asynchronous, low-latency local streaming reverse proxy.
+- **[Cobra](https://github.com/spf13/cobra)** — Powers the Go CLI commands and flag parsing.
 
 ## License
 

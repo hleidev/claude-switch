@@ -213,13 +213,24 @@ make vet              # go vet ./...
 |---|---|
 | `main.go` | 入口；读取 `main.version` 后交给 `cmd` |
 | `cmd/` | 各 cobra 子命令实现（`add`、`use`、`setup` 等） |
+| `internal/bridge` | 内置的 OpenAI 转 Anthropic 协议转译守护进程与契约测试 |
 | `internal/claudejson` | 读写 `~/.claude/.credentials.json`，用于 OAuth 重新注册 |
 | `internal/config` | 解析 `config.toml`、服务商、默认值 |
 | `internal/migrate` | 一次性导入器，把旧 `~/.claude-switch/` 布局搬过来 |
 | `internal/presets` | 内置服务商模板（模型名、base URL） |
+| `internal/secret` | macOS Keychain 与环境变量安全凭证解析 |
 | `internal/shellenv` | 环境变量合并 + `init zsh` / `init bash` 输出片段 |
 | `.goreleaser.yaml` | GoReleaser 配置；打 tag 推送即编译二进制并更新 [Homebrew tap](https://github.com/hleidev/homebrew-claude-switch) |
 | `Makefile` | `build` / `test` / `install` / `uninstall` / `fmt` / `vet` / `clean` |
+
+## 致谢
+
+`claude-switch` 的实现得益于以下优秀的开源项目：
+
+- **[LiteLLM](https://github.com/BerriAI/litellm)** — 驱动内置转译 Bridge 的核心，提供成熟的 Anthropic Messages 协议适配、参数转换与 Token 预检能力。
+- **[uv](https://github.com/astral-sh/uv)** — 提供极速、自包含且免虚拟环境配置的 Python 守护进程运行能力。
+- **[FastAPI](https://fastapi.tiangolo.com/)** 与 **[Uvicorn](https://www.uvicorn.org/)** — 驱动本地异步、低延迟的流式反向代理服务。
+- **[Cobra](https://github.com/spf13/cobra)** — 驱动 Go 命令行交互与子命令路由。
 
 ## 许可证
 
