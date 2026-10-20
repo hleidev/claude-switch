@@ -12,10 +12,14 @@ import os
 import re
 import json
 import logging
+import asyncio
+import random
 from typing import Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
+import httpx
 import uvicorn
 import litellm
 from litellm.llms.anthropic.pass_through.adapters.transformation import AnthropicAdapter
@@ -27,10 +31,44 @@ logger = logging.getLogger("claude-bridge")
 litellm.telemetry = False
 litellm.drop_params = True
 
-app = FastAPI(title="Claude Code OpenAI Bridge")
+# Proactive Socket Hygiene:
+# Bound keepalive expiry to 20s to proactively evict idle/half-open TCP sockets
+# before upstream firewalls/proxies drop them mid-stream.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not getattr(litellm, "aclient_session", None) or litellm.aclient_session.is_closed:
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=20.0)
+        timeout = httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=10.0)
+        litellm.aclient_session = httpx.AsyncClient(limits=limits, timeout=timeout)
+    yield
+    if getattr(litellm, "aclient_session", None) and not litellm.aclient_session.is_closed:
+        await litellm.aclient_session.aclose()
+
+app = FastAPI(title="Claude Code OpenAI Bridge", lifespan=lifespan)
 adapter = AnthropicAdapter()
 
 DEFAULT_FALLBACK_MODEL = "gpt-6.1-sol"
+
+
+async def async_next_chunk(aiter):
+    """Safely fetch next chunk from an async iterator, returning None on StopAsyncIteration."""
+    try:
+        return await aiter.__anext__()
+    except StopAsyncIteration:
+        return None
+
+
+def is_transient_error(error: Exception) -> bool:
+    """Determine whether an error is safe to retry transparently before first chunk is emitted."""
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and status in {500, 502, 503, 504, 408, 429}:
+        return True
+    msg = str(error).lower()
+    transient_indicators = [
+        "connection", "disconnected", "reset", "timeout", "timed out",
+        "eof", "broken pipe", "transfer encoding", "cannot connect"
+    ]
+    return any(ind in msg for ind in transient_indicators)
 
 
 def completion_error(error: Exception) -> tuple[int, dict]:
@@ -171,6 +209,10 @@ async def route_request(request: Request, full_path: str):
     # Anthropic API defaults to non-streaming when "stream" is omitted (e.g. auto mode classifier).
     is_stream = anthropic_body.get("stream", False)
 
+    out_model = incoming_model if incoming_model else target_model
+    max_pre_emit_retries = 2
+    backoff_base = 0.25
+
     try:
         # Agnostic hydration: start from adapter-translated OpenAI request dictionary,
         # then inject custom routing, credentials, and resilience policies.
@@ -180,36 +222,69 @@ async def route_request(request: Request, full_path: str):
             "api_base": upstream_base,
             "api_key": api_key,
             "stream": is_stream,
-            # Retry transient upstream failures (503/500/connection) before response starts.
             "num_retries": 2,
         }
         if is_stream:
             kwargs["stream_options"] = {"include_usage": True}
 
-        out_model = incoming_model if incoming_model else target_model
         logger.info("Dispatching to litellm.acompletion (stream=%s)...", is_stream)
         if is_stream:
-            response = await litellm.acompletion(**kwargs)
-            anthropic_stream = adapter.translate_completion_output_params_streaming(
-                response,
-                model=out_model,
-                tool_name_mapping=tool_name_mapping,
-                is_async=True
-            )
-            async def stream_generator():
+            # Phase 1: PRE_EMIT - transparent retry loop before HTTP headers are sent.
+            first_chunk = None
+            anthropic_stream = None
+
+            for attempt in range(max_pre_emit_retries + 1):
                 try:
-                    async for chunk in anthropic_stream:
-                        if chunk:
-                            if isinstance(chunk, str):
-                                yield chunk.encode("utf-8")
-                            else:
-                                yield chunk
+                    response = await litellm.acompletion(**kwargs)
+                    anthropic_stream = adapter.translate_completion_output_params_streaming(
+                        response,
+                        model=out_model,
+                        tool_name_mapping=tool_name_mapping,
+                        is_async=True
+                    )
+                    # Verify stream is alive by prefetching the initial chunk
+                    first_chunk = await async_next_chunk(anthropic_stream)
+                    break
                 except Exception as e:
-                    logger.error("Error streaming completion: %s", e, exc_info=True)
+                    if attempt < max_pre_emit_retries and is_transient_error(e):
+                        delay = backoff_base * (2 ** attempt) + random.uniform(0.05, 0.15)
+                        logger.warning(
+                            "Transient upstream error in PRE_EMIT attempt %d/%d (%s); retrying in %.2fs...",
+                            attempt + 1, max_pre_emit_retries + 1, e, delay
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+
+            # Phase 2: POST_EMIT - stream established; yield first chunk then iterate remainder.
+            async def stream_generator():
+                nonlocal anthropic_stream
+                try:
+                    if first_chunk:
+                        if isinstance(first_chunk, str):
+                            yield first_chunk.encode("utf-8")
+                        else:
+                            yield first_chunk
+
+                    if anthropic_stream:
+                        async for chunk in anthropic_stream:
+                            if chunk:
+                                if isinstance(chunk, str):
+                                    yield chunk.encode("utf-8")
+                                else:
+                                    yield chunk
+                except Exception as e:
+                    logger.error("Error streaming completion (POST_EMIT mid-stream): %s", e, exc_info=True)
                     # HTTP headers have already been sent; report the error as
                     # an Anthropic SSE event instead of dropping the connection.
                     _, payload = completion_error(e)
                     yield f"event: error\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
+                finally:
+                    if anthropic_stream and hasattr(anthropic_stream, "aclose"):
+                        try:
+                            await anthropic_stream.aclose()
+                        except Exception:
+                            pass
 
             return StreamingResponse(
                 stream_generator(),
@@ -221,7 +296,23 @@ async def route_request(request: Request, full_path: str):
                 }
             )
         else:
-            response = await litellm.acompletion(**kwargs)
+            # Non-streaming request (100% PRE_EMIT)
+            response = None
+            for attempt in range(max_pre_emit_retries + 1):
+                try:
+                    response = await litellm.acompletion(**kwargs)
+                    break
+                except Exception as e:
+                    if attempt < max_pre_emit_retries and is_transient_error(e):
+                        delay = backoff_base * (2 ** attempt) + random.uniform(0.05, 0.15)
+                        logger.warning(
+                            "Transient upstream error in non-stream attempt %d/%d (%s); retrying in %.2fs...",
+                            attempt + 1, max_pre_emit_retries + 1, e, delay
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+
             # Guard against upstream responses missing the usage field
             if not getattr(response, "usage", None):
                 try:

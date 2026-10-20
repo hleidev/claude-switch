@@ -269,5 +269,112 @@ class BridgeConcurrencyTests(unittest.IsolatedAsyncioTestCase):
                     await stream_task
 
 
+class BridgeTransportResilienceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pre_emit_transparent_retry_on_stream(self):
+        """Verify that an initial connection drop during PRE_EMIT is transparently retried."""
+        attempts = 0
+
+        async def valid_stream():
+            yield b'event: message_start\ndata: {"type": "message_start"}\n\n'
+            yield b'event: content_block_delta\ndata: {"delta": {"text": "hello"}}\n\n'
+            yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+
+        async def flaky_acompletion(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                # First attempt fails with transient connection reset before headers are sent
+                raise litellm.APIConnectionError(
+                    message="Server disconnected (injected transient fault)",
+                    model="gpt-6.1-sol",
+                    llm_provider="openai",
+                )
+            return AsyncMock()
+
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            with patch.object(bridge.litellm, "acompletion", side_effect=flaky_acompletion), \
+                 patch.object(bridge.adapter, "translate_completion_output_params_streaming", side_effect=lambda *args, **kwargs: valid_stream()):
+
+                response = await client.post(
+                    "/https/example.com/v1/messages",
+                    headers={"x-api-key": "test-token"},
+                    json={"model": "test", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("message_start", response.text)
+                self.assertIn("message_stop", response.text)
+                self.assertEqual(attempts, 2, "Must have retried transparently once")
+
+    async def test_pre_emit_transparent_retry_on_non_stream(self):
+        """Verify that a transient 503 during non-stream PRE_EMIT is transparently retried."""
+        attempts = 0
+
+        completion = litellm.ModelResponse(
+            model="gpt-6.1-sol",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "retried_ok"}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+        )
+
+        async def flaky_acompletion(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise litellm.ServiceUnavailableError(
+                    message="Upstream 503 transient error",
+                    model="gpt-6.1-sol",
+                    llm_provider="openai",
+                )
+            return completion
+
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            with patch.object(bridge.litellm, "acompletion", side_effect=flaky_acompletion):
+                response = await client.post(
+                    "/https/example.com/v1/messages",
+                    headers={"x-api-key": "test-token"},
+                    json={"model": "test", "messages": [{"role": "user", "content": "hi"}], "stream": False},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["content"][0]["text"], "retried_ok")
+                self.assertEqual(attempts, 2)
+
+    async def test_post_emit_mid_stream_graceful_degradation(self):
+        """Verify that mid-stream truncation gracefully emits an Anthropic error event and closes."""
+        async def truncated_stream():
+            yield b'event: message_start\ndata: {"type": "message_start"}\n\n'
+            # Injected mid-stream connection drop
+            raise litellm.APIConnectionError(
+                message="Response payload is not completed: Not enough data to satisfy transfer length header.",
+                model="gpt-6.1-sol",
+                llm_provider="openai",
+            )
+
+        import httpx
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock), \
+                 patch.object(bridge.adapter, "translate_completion_output_params_streaming", return_value=truncated_stream()), \
+                 self.assertLogs(bridge.logger, level="ERROR"):
+
+                response = await client.post(
+                    "/https/example.com/v1/messages",
+                    headers={"x-api-key": "test-token"},
+                    json={"model": "test", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("event: message_start", response.text)
+                self.assertIn("event: error", response.text)
+                self.assertIn("api_error", response.text)
+
+
 if __name__ == "__main__":
     unittest.main()
