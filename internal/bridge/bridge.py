@@ -157,6 +157,8 @@ async def route_request(request: Request, full_path: str):
             "stream": is_stream,
             "temperature": anthropic_body.get("temperature", 1.0),
             "max_tokens": anthropic_body.get("max_tokens", 8192),
+            # Retry transient upstream failures (503/500/connection) before the response starts.
+            "num_retries": 2,
         }
         if is_stream:
             kwargs["stream_options"] = {"include_usage": True}

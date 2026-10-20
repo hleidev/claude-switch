@@ -84,6 +84,7 @@ class BridgeErrorTests(unittest.TestCase):
             response = self.request()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(call.call_args.kwargs["model"], "openai/gpt-6.1-sol")
+        self.assertEqual(call.call_args.kwargs["num_retries"], 2)
         self.assertEqual(response.json()["model"], "gpt-6.1-sol[1m]")
         self.assertEqual(response.json()["content"][0]["text"], "OK")
 
