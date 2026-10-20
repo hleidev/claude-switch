@@ -376,5 +376,54 @@ class BridgeTransportResilienceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("api_error", response.text)
 
 
+class BridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        bridge.server_state = bridge.STATE_READY
+        bridge.active_requests = 0
+
+    async def asyncTearDown(self):
+        bridge.server_state = bridge.STATE_READY
+        bridge.active_requests = 0
+
+    async def test_health_exposes_hash_and_lifecycle_metadata(self):
+        import httpx
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/health")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["service"], "claude-switch-bridge")
+            self.assertEqual(data["state"], "READY")
+            self.assertTrue(data["supports_drain"])
+            self.assertIsInstance(data["hash"], str)
+            self.assertEqual(len(data["hash"]), 64)
+
+    async def test_drain_transitions_state_and_rejects_new_messages(self):
+        import httpx
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+        ) as client:
+            # Drain
+            drain_resp = await client.post("/control/drain")
+            self.assertEqual(drain_resp.status_code, 200)
+            data = drain_resp.json()
+            self.assertEqual(data["status"], "draining")
+            self.assertEqual(bridge.server_state, "DRAINING")
+
+            # Health reflects draining
+            health_resp = await client.get("/health")
+            self.assertEqual(health_resp.status_code, 200)
+            self.assertEqual(health_resp.json()["state"], "DRAINING")
+
+            # Subsequent messages rejected with 503 during drain
+            req_resp = await client.post(
+                "/https/example.com/v1/messages",
+                headers={"x-api-key": "test"},
+                json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            self.assertEqual(req_resp.status_code, 503)
+            self.assertEqual(req_resp.json()["error"]["type"], "service_unavailable")
 if __name__ == "__main__":
     unittest.main()

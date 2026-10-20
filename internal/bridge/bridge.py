@@ -10,7 +10,11 @@
 
 import os
 import re
+import sys
 import json
+import fcntl
+import asyncio
+import hashlib
 import logging
 import asyncio
 import random
@@ -48,6 +52,48 @@ app = FastAPI(title="Claude Code OpenAI Bridge", lifespan=lifespan)
 adapter = AnthropicAdapter()
 
 DEFAULT_FALLBACK_MODEL = "gpt-6.1-sol"
+
+STATE_READY = "READY"
+STATE_DRAINING = "DRAINING"
+
+server_state = STATE_READY
+active_requests = 0
+global_server: Optional[uvicorn.Server] = None
+lock_file = None
+
+
+def get_script_hash() -> str:
+    path = __file__
+    if path.endswith(".pyc"):
+        path = path[:-1]
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return ""
+
+
+CONTROL_PATHS = {"/health", "/control/drain", "/control/status"}
+
+
+@app.middleware("http")
+async def track_active_requests(request: Request, call_next):
+    global active_requests
+    path = request.url.path
+    is_control = path in CONTROL_PATHS or path.rstrip("/") in CONTROL_PATHS
+
+    if not is_control and server_state == STATE_DRAINING:
+        return JSONResponse(
+            status_code=503,
+            headers={"Connection": "close"},
+            content={"type": "error", "error": {"type": "service_unavailable", "message": "Bridge is draining and retiring"}},
+        )
+
+    active_requests += 1
+    try:
+        return await call_next(request)
+    finally:
+        active_requests -= 1
 
 
 async def async_next_chunk(aiter):
@@ -128,7 +174,64 @@ async def handle_head(full_path: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "claude-switch-bridge"}
+    return {
+        "status": "ok",
+        "service": "claude-switch-bridge",
+        "hash": get_script_hash(),
+        "state": server_state,
+        "active_requests": active_requests,
+        "pid": os.getpid(),
+        "supports_drain": True,
+    }
+
+
+async def drain_and_shutdown(server: Optional[uvicorn.Server], timeout: float = 60.0):
+    await asyncio.sleep(0.05)  # Allow HTTP response to flush over network
+    deadline = asyncio.get_event_loop().time() + timeout
+    logger.info("Graceful drain started (timeout=%.1fs, active_requests=%d)...", timeout, active_requests)
+    while active_requests > 0 and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.1)
+    logger.info("Graceful drain complete (active_requests=%d). Exiting server.", active_requests)
+    if server:
+        server.should_exit = True
+    else:
+        sys.exit(0)
+
+
+@app.post("/control/drain")
+async def control_drain():
+    global server_state, lock_file
+    logger.info("Control drain requested. Current state=%s, active_requests=%d", server_state, active_requests)
+    server_state = STATE_DRAINING
+
+    # 1. Release daemon lock so new daemon can acquire it immediately
+    if lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+            lock_file.close()
+            lock_file = None
+            logger.info("Released daemon file lock")
+        except Exception as e:
+            logger.warning("Error releasing daemon lock: %s", e)
+
+    # 2. Close listening socket so port is immediately freed for new daemon
+    if global_server and hasattr(global_server, "servers"):
+        for s in global_server.servers:
+            try:
+                s.close()
+            except Exception as e:
+                logger.warning("Error closing listening socket: %s", e)
+        logger.info("Closed listener sockets on port")
+
+    # 3. Schedule background drain task
+    asyncio.create_task(drain_and_shutdown(global_server, timeout=60.0))
+
+    return {
+        "status": "draining",
+        "hash": get_script_hash(),
+        "active_requests": active_requests,
+        "pid": os.getpid(),
+    }
 
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "OPTIONS"])
@@ -341,14 +444,16 @@ async def route_request(request: Request, full_path: str):
         status, payload = completion_error(e)
         return JSONResponse(status_code=status, content=payload)
 
+async def run_server(port: int):
+    global global_server
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    global_server = uvicorn.Server(config)
+    await global_server.serve()
+
 
 if __name__ == "__main__":
-    import sys
-    import fcntl
-
     port = int(os.environ.get("BRIDGE_PORT", "8088"))
     lock_path = os.environ.get("BRIDGE_LOCK_PATH")
-    lock_file = None
     if lock_path:
         try:
             os.makedirs(os.path.dirname(lock_path), exist_ok=True)
@@ -359,4 +464,4 @@ if __name__ == "__main__":
             sys.stderr.write(f"ERROR: bridge daemon lock already held ({e})\n")
             sys.exit(48)
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    asyncio.run(run_server(port))

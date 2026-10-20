@@ -108,3 +108,108 @@ func TestStatusSelfHealingPID(t *testing.T) {
 		t.Fatalf("expected running to be true")
 	}
 }
+
+func TestScriptHash(t *testing.T) {
+	h := ScriptHash()
+	if len(h) != 64 {
+		t.Fatalf("expected 64-char hex hash, got %q (len %d)", h, len(h))
+	}
+}
+
+func TestProbe_MetadataParsing(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"status": "ok",
+				"service": "claude-switch-bridge",
+				"hash": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+				"state": "READY",
+				"active_requests": 2,
+				"pid": 12345,
+				"supports_drain": true
+			}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	port := ts.Listener.Addr().(*net.TCPAddr).Port
+
+	probe, err := Probe(port)
+	if err != nil {
+		t.Fatalf("Probe failed: %v", err)
+	}
+	if !probe.Running {
+		t.Fatalf("expected probe.Running to be true")
+	}
+	if probe.Hash != "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" {
+		t.Fatalf("unexpected hash: %s", probe.Hash)
+	}
+	if probe.State != StateReady {
+		t.Fatalf("expected state READY, got %s", probe.State)
+	}
+	if probe.ActiveRequests != 2 {
+		t.Fatalf("expected 2 active requests, got %d", probe.ActiveRequests)
+	}
+	if probe.PID != 12345 {
+		t.Fatalf("expected PID 12345, got %d", probe.PID)
+	}
+	if !probe.SupportsDrain {
+		t.Fatalf("expected SupportsDrain to be true")
+	}
+}
+
+func TestProbe_DrainingState_NotReady(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status": "ok", "state": "DRAINING", "supports_drain": true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	port := ts.Listener.Addr().(*net.TCPAddr).Port
+
+	probe, err := Probe(port)
+	if err != nil {
+		t.Fatalf("Probe failed: %v", err)
+	}
+	if !probe.Running {
+		t.Fatalf("expected probe.Running to be true")
+	}
+	if probe.State != StateDraining {
+		t.Fatalf("expected state DRAINING, got %s", probe.State)
+	}
+
+	// IsRunning must report false when daemon is in DRAINING state
+	if IsRunning(port) {
+		t.Fatalf("expected IsRunning to be false when daemon is DRAINING")
+	}
+}
+
+func TestDrain_Call(t *testing.T) {
+	drained := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/control/drain" && r.Method == http.MethodPost {
+			drained = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status": "draining"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	port := ts.Listener.Addr().(*net.TCPAddr).Port
+
+	if err := Drain(port, 1*time.Second); err != nil {
+		t.Fatalf("Drain error: %v", err)
+	}
+	if !drained {
+		t.Fatalf("expected drain endpoint to be called")
+	}
+}
