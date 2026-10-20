@@ -146,7 +146,8 @@ async def route_request(request: Request, full_path: str):
             content={"type": "error", "error": {"type": "invalid_request_error", "message": f"Translation error: {e}"}}
         )
 
-    is_stream = anthropic_body.get("stream", True)
+    # Anthropic API defaults to non-streaming when "stream" is omitted (e.g. auto mode classifier).
+    is_stream = anthropic_body.get("stream", False)
 
     try:
         kwargs = {

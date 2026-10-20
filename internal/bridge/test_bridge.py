@@ -74,6 +74,19 @@ class BridgeErrorTests(unittest.TestCase):
         payload = json.loads(response.text.split("event: error\ndata: ")[1])
         self.assertEqual(payload["error"]["type"], "not_found_error")
 
+    def test_request_without_stream_field_returns_json_message(self):
+        completion = litellm.ModelResponse(
+            model="gpt-6.1-sol",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+        )
+        del self.body["stream"]
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, return_value=completion) as call:
+            response = self.request()
+        self.assertFalse(call.call_args.kwargs["stream"])
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertEqual(response.json()["usage"]["input_tokens"], 3)
+
     def test_success_keeps_selected_model(self):
         completion = litellm.ModelResponse(
             model="gpt-6.1-sol",
