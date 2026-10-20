@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import bridge
 
 
-class BridgeErrorTests(unittest.TestCase):
+class BridgeContractTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(bridge.app)
         self.body = {
@@ -20,11 +20,11 @@ class BridgeErrorTests(unittest.TestCase):
             "stream": False,
         }
 
-    def request(self):
+    def request(self, path="/https/example.com/v1/messages", custom_body=None):
         return self.client.post(
-            "/https/example.com/v1/messages",
+            path,
             headers={"x-api-key": "test-token"},
-            json=self.body,
+            json=custom_body if custom_body is not None else self.body,
         )
 
     def test_upstream_errors_preserve_status_and_anthropic_error_type(self):
@@ -86,6 +86,102 @@ class BridgeErrorTests(unittest.TestCase):
         self.assertFalse(call.call_args.kwargs["stream"])
         self.assertEqual(response.headers["content-type"], "application/json")
         self.assertEqual(response.json()["usage"]["input_tokens"], 3)
+
+    def test_stop_sequences_automatically_hydrated_to_openai_stop(self):
+        completion = litellm.ModelResponse(
+            model="gpt-6.1-sol",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+        )
+        self.body["stop_sequences"] = ["</block>", "\nObservation:"]
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, return_value=completion) as call:
+            response = self.request()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(call.call_args.kwargs["stop"], ["</block>", "\nObservation:"])
+
+    def test_thinking_adaptive_hydrated_to_upstream(self):
+        completion = litellm.ModelResponse(
+            model="gpt-6.1-sol",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+        )
+        self.body["thinking"] = {"type": "adaptive"}
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, return_value=completion) as call:
+            response = self.request()
+        self.assertEqual(response.status_code, 200)
+        # Verify that Anthropic adaptive thinking is semantically translated to OpenAI reasoning_effort
+        self.assertIn("reasoning_effort", call.call_args.kwargs)
+        self.assertEqual(call.call_args.kwargs["reasoning_effort"], "medium")
+
+    def test_long_tool_name_truncated_and_restored_in_response(self):
+        long_name = "a_very_long_tool_name_that_exceeds_openai_sixty_four_character_limit_for_function_names"
+        self.body["tools"] = [{
+            "name": long_name,
+            "description": "test tool",
+            "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        }]
+        
+        # Upstream returns response with the truncated tool name
+        # The adapter generates a truncated name ending in hash
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as call:
+            # First, check what tool name is dispatched to acompletion
+            def mock_acompletion(**kwargs):
+                dispatched_tools = kwargs.get("tools", [])
+                truncated_name = dispatched_tools[0]["function"]["name"]
+                # Simulate OpenAI returning the truncated tool call
+                mock_resp = litellm.ModelResponse(
+                    model="gpt-6.1-sol",
+                    choices=[{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {"name": truncated_name, "arguments": '{"q":"val"}'}
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }],
+                    usage={"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+                )
+                return mock_resp
+
+            call.side_effect = mock_acompletion
+            response = self.request()
+
+        self.assertEqual(response.status_code, 200)
+        tool_use = response.json()["content"][0]
+        self.assertEqual(tool_use["type"], "tool_use")
+        # Assert that the client receives the RESTORED original long tool name!
+        self.assertEqual(tool_use["name"], long_name)
+
+    def test_usage_invariant_guard_populates_missing_tokens(self):
+        # Simulate an upstream response completely lacking a usage block
+        completion = litellm.ModelResponse(
+            model="gpt-6.1-sol",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+            usage=None,
+        )
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock, return_value=completion):
+            response = self.request()
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("usage", data)
+        self.assertEqual(data["usage"]["input_tokens"], 0)
+        self.assertEqual(data["usage"]["output_tokens"], 0)
+
+    def test_count_tokens_endpoint(self):
+        body = {
+            "model": "gpt-6.1-sol",
+            "messages": [{"role": "user", "content": "Hello Claude! How are you?"}]
+        }
+        response = self.request(path="/https/example.com/v1/messages/count_tokens", custom_body=body)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("input_tokens", data)
+        self.assertGreater(data["input_tokens"], 0)
 
     def test_success_keeps_selected_model(self):
         completion = litellm.ModelResponse(
