@@ -57,15 +57,17 @@ def parse_upstream_target(path: str) -> tuple[str, str]:
     """
     Extracts the upstream base URL and the sub-endpoint from the incoming path.
     Supported path patterns:
-      /https/<host>/<subpath>/v1/messages -> (https://<host>/<subpath>/v1, /v1/messages)
-      /http/<host>/<subpath>/v1/messages  -> (http://<host>/<subpath>/v1, /v1/messages)
-      /proxy/<url>/v1/messages             -> (<url>, /v1/messages)
+      /https/<host>/<subpath>/v1/messages/count_tokens -> (https://<host>/<subpath>/v1, /v1/messages/count_tokens)
+      /https/<host>/<subpath>/v1/messages              -> (https://<host>/<subpath>/v1, /v1/messages)
+      /http/<host>/<subpath>/v1/messages               -> (http://<host>/<subpath>/v1, /v1/messages)
+      /proxy/<url>/v1/messages                          -> (<url>, /v1/messages)
     """
     cleaned = path.lstrip("/")
     m = re.match(r"^(https?)/([^/]+)(/.*)?$", cleaned)
     if m:
         proto, host, rest = m.group(1), m.group(2), m.group(3) or ""
-        for endpoint in ["/v1/messages", "/api/hello", "/v1/models"]:
+        # Match longest endpoints first to avoid premature suffix match
+        for endpoint in ["/v1/messages/count_tokens", "/v1/messages", "/api/hello", "/v1/models"]:
             if rest.endswith(endpoint):
                 base_sub = rest[:-len(endpoint)].rstrip("/")
                 upstream_base = f"{proto}://{host}{base_sub}"
@@ -79,14 +81,17 @@ def parse_upstream_target(path: str) -> tuple[str, str]:
 
     return "https://wawazz.xyz/v1", "/" + cleaned
 
+
 @app.head("/{full_path:path}")
 async def handle_head(full_path: str):
     logger.info("HEAD request to /%s", full_path)
     return Response(status_code=200)
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "claude-switch-bridge"}
+
 
 @app.api_route("/{full_path:path}", methods=["GET", "POST", "OPTIONS"])
 async def route_request(request: Request, full_path: str):
@@ -134,11 +139,28 @@ async def route_request(request: Request, full_path: str):
     # Strip [1m] suffix for upstream OpenAI compatibility
     target_model = re.sub(r"(?i)\[1m\]$", "", target_model)
 
+    # Handle /v1/messages/count_tokens endpoint (token preflight)
+    if endpoint == "/v1/messages/count_tokens" or full_path.endswith("/v1/messages/count_tokens"):
+        try:
+            msgs = anthropic_body.get("messages", [])
+            tokens = litellm.token_counter(model="gpt-4o", messages=msgs)
+            return JSONResponse(content={"input_tokens": tokens})
+        except Exception as e:
+            logger.warning("Failed to count tokens locally, returning safe estimate: %s", e)
+            chars = sum(len(str(m.get("content", ""))) for m in anthropic_body.get("messages", []))
+            return JSONResponse(content={"input_tokens": max(1, chars // 4)})
+
     logger.info("Routing request: Model %s -> upstream %s | Upstream %s", incoming_model, target_model, upstream_base)
 
-    # Translate Anthropic parameters to OpenAI format
+    # Translate Anthropic parameters to OpenAI format via comprehensive adapter
     try:
-        openai_params = adapter.translate_completion_input_params(anthropic_body)
+        (
+            openai_params,
+            tool_name_mapping,
+        ) = adapter.translate_completion_input_params_with_tool_mapping(
+            anthropic_body,
+            custom_llm_provider="openai",
+        )
     except Exception as e:
         logger.error("Adapter input translation error: %s", e)
         return JSONResponse(
@@ -150,23 +172,19 @@ async def route_request(request: Request, full_path: str):
     is_stream = anthropic_body.get("stream", False)
 
     try:
+        # Agnostic hydration: start from adapter-translated OpenAI request dictionary,
+        # then inject custom routing, credentials, and resilience policies.
         kwargs = {
+            **openai_params,
             "model": f"openai/{target_model}",
-            "messages": openai_params["messages"],
             "api_base": upstream_base,
             "api_key": api_key,
             "stream": is_stream,
-            "temperature": anthropic_body.get("temperature", 1.0),
-            "max_tokens": anthropic_body.get("max_tokens", 8192),
-            # Retry transient upstream failures (503/500/connection) before the response starts.
+            # Retry transient upstream failures (503/500/connection) before response starts.
             "num_retries": 2,
         }
         if is_stream:
             kwargs["stream_options"] = {"include_usage": True}
-        if "tools" in openai_params and openai_params["tools"]:
-            kwargs["tools"] = openai_params["tools"]
-        if "tool_choice" in openai_params and openai_params["tool_choice"]:
-            kwargs["tool_choice"] = openai_params["tool_choice"]
 
         out_model = incoming_model if incoming_model else target_model
         logger.info("Dispatching to litellm.acompletion (stream=%s)...", is_stream)
@@ -175,6 +193,7 @@ async def route_request(request: Request, full_path: str):
             anthropic_stream = adapter.translate_completion_output_params_streaming(
                 response,
                 model=out_model,
+                tool_name_mapping=tool_name_mapping,
                 is_async=True
             )
             async def stream_generator():
@@ -203,14 +222,34 @@ async def route_request(request: Request, full_path: str):
             )
         else:
             response = await litellm.acompletion(**kwargs)
-            anthropic_resp = adapter.translate_completion_output_params(response)
+            # Guard against upstream responses missing the usage field
+            if not getattr(response, "usage", None):
+                try:
+                    response.usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                except Exception:
+                    pass
+
+            anthropic_resp = adapter.translate_completion_output_params(
+                response,
+                tool_name_mapping=tool_name_mapping
+            )
             anthropic_resp["model"] = out_model
+
+            # Usage invariant guard: ensure input_tokens and output_tokens always exist
+            # to protect client deserialization from TypeErrors.
+            if "usage" not in anthropic_resp or not isinstance(anthropic_resp["usage"], dict):
+                anthropic_resp["usage"] = {"input_tokens": 0, "output_tokens": 0}
+            else:
+                anthropic_resp["usage"].setdefault("input_tokens", 0)
+                anthropic_resp["usage"].setdefault("output_tokens", 0)
+
             return JSONResponse(content=anthropic_resp)
 
     except Exception as e:
         logger.error("Error executing completion: %s", e, exc_info=True)
         status, payload = completion_error(e)
         return JSONResponse(status_code=status, content=payload)
+
 
 if __name__ == "__main__":
     import sys
