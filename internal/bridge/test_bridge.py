@@ -1,3 +1,13 @@
+#!/usr/bin/env -S uv run
+# /// script
+# dependencies = [
+#     "fastapi>=0.110.0",
+#     "uvicorn>=0.28.0",
+#     "litellm[proxy]>=1.40.0",
+#     "httpx>=0.27.0",
+# ]
+# ///
+
 import asyncio
 import json
 import threading
@@ -12,6 +22,7 @@ import bridge
 
 class BridgeContractTests(unittest.TestCase):
     def setUp(self):
+        bridge.STREAM_ONLY_UPSTREAMS.clear()
         self.client = TestClient(bridge.app)
         self.body = {
             "model": "gpt-6.1-sol[1m]",
@@ -19,6 +30,9 @@ class BridgeContractTests(unittest.TestCase):
             "max_tokens": 16,
             "stream": False,
         }
+
+    def tearDown(self):
+        bridge.STREAM_ONLY_UPSTREAMS.clear()
 
     def request(self, path="/https/example.com/v1/messages", custom_body=None):
         return self.client.post(
@@ -196,6 +210,97 @@ class BridgeContractTests(unittest.TestCase):
         self.assertEqual(call.call_args.kwargs["num_retries"], 2)
         self.assertEqual(response.json()["model"], "gpt-6.1-sol[1m]")
         self.assertEqual(response.json()["content"][0]["text"], "OK")
+
+    def test_stream_required_transparent_fallback_and_aggregation(self):
+        stream_required_err = litellm.BadRequestError(
+            message='OpenAIException - {"error":{"code":"stream_required","message":"This group only accepts streaming requests; set \\"stream\\": true"}}',
+            model="gpt-6.1-sol",
+            llm_provider="openai",
+        )
+
+        async def mock_stream():
+            yield litellm.ModelResponse(choices=[{"delta": {"role": "assistant", "content": "Hello "}}])
+            yield litellm.ModelResponse(
+                choices=[{"delta": {"content": "stream aggregated!"}}],
+                usage={"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}
+            )
+
+        call_count = 0
+        async def mock_acompletion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                self.assertFalse(kwargs.get("stream", False))
+                raise stream_required_err
+            else:
+                self.assertTrue(kwargs.get("stream"))
+                return mock_stream()
+
+        with patch.object(bridge.litellm, "acompletion", side_effect=mock_acompletion):
+            response = self.request()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(call_count, 2)
+        data = response.json()
+        self.assertEqual(data["content"][0]["text"], "Hello stream aggregated!")
+        self.assertEqual(data["usage"]["input_tokens"], 12)
+        self.assertEqual(data["usage"]["output_tokens"], 4)
+        self.assertIn("https://example.com/v1", bridge.STREAM_ONLY_UPSTREAMS)
+
+    def test_stream_only_cache_hits_directly_without_retry(self):
+        bridge.STREAM_ONLY_UPSTREAMS.add("https://example.com/v1")
+
+        async def mock_stream():
+            yield litellm.ModelResponse(
+                choices=[{"delta": {"role": "assistant", "content": "Cached stream response"}}],
+                usage={"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}
+            )
+
+        call_count = 0
+        async def mock_acompletion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            self.assertTrue(kwargs.get("stream"))
+            return mock_stream()
+
+        with patch.object(bridge.litellm, "acompletion", side_effect=mock_acompletion):
+            response = self.request()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(call_count, 1)
+        data = response.json()
+        self.assertEqual(data["content"][0]["text"], "Cached stream response")
+        self.assertEqual(data["usage"]["input_tokens"], 8)
+
+    def test_stream_aggregation_with_tool_use(self):
+        bridge.STREAM_ONLY_UPSTREAMS.add("https://example.com/v1")
+        self.body["tools"] = [{
+            "name": "lookup_user",
+            "description": "get user info",
+            "input_schema": {"type": "object", "properties": {"uid": {"type": "string"}}},
+        }]
+
+        async def mock_tool_stream():
+            yield litellm.ModelResponse(choices=[{"delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_abc", "function": {"name": "lookup_user", "arguments": ""}}]}}])
+            yield litellm.ModelResponse(choices=[{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"uid": "'}}]}}])
+            yield litellm.ModelResponse(choices=[{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '42"}'}}]}}])
+            yield litellm.ModelResponse(choices=[{"delta": {}, "finish_reason": "tool_calls"}], usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30})
+
+        async def mock_acompletion(**kwargs):
+            return mock_tool_stream()
+
+        with patch.object(bridge.litellm, "acompletion", side_effect=mock_acompletion):
+            response = self.request()
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["stop_reason"], "tool_use")
+        self.assertEqual(data["content"][0]["type"], "tool_use")
+        self.assertEqual(data["content"][0]["id"], "call_abc")
+        self.assertEqual(data["content"][0]["name"], "lookup_user")
+        self.assertEqual(data["content"][0]["input"], {"uid": "42"})
+        self.assertEqual(data["usage"]["input_tokens"], 20)
+        self.assertEqual(data["usage"]["output_tokens"], 10)
 
 
 class BridgeConcurrencyTests(unittest.IsolatedAsyncioTestCase):

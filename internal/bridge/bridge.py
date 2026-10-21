@@ -53,6 +53,8 @@ adapter = AnthropicAdapter()
 
 DEFAULT_FALLBACK_MODEL = "gpt-6.1-sol"
 
+STREAM_ONLY_UPSTREAMS: set[str] = set()
+
 STATE_READY = "READY"
 STATE_DRAINING = "DRAINING"
 
@@ -115,6 +117,42 @@ def is_transient_error(error: Exception) -> bool:
         "eof", "broken pipe", "transfer encoding", "cannot connect"
     ]
     return any(ind in msg for ind in transient_indicators)
+
+
+def is_stream_required_error(error: Exception) -> bool:
+    """Determine whether an error indicates the upstream group only accepts streaming requests."""
+    msg = str(error).lower()
+    return (
+        "stream_required" in msg
+        or "only accepts streaming requests" in msg
+        or '"stream": true' in msg
+        or "'stream': true" in msg
+    )
+
+
+async def aggregate_stream_to_model_response(stream_response, messages: list) -> litellm.ModelResponse:
+    """Aggregate chunks from an upstream streaming response into a single ModelResponse."""
+    chunks = []
+    max_chunks = 100_000
+    if hasattr(stream_response, "__aiter__"):
+        async for chunk in stream_response:
+            chunks.append(chunk)
+            if len(chunks) > max_chunks:
+                raise HTTPException(status_code=413, detail="Stream response exceeded aggregation buffer limits")
+    elif hasattr(stream_response, "__iter__"):
+        for chunk in stream_response:
+            chunks.append(chunk)
+            if len(chunks) > max_chunks:
+                raise HTTPException(status_code=413, detail="Stream response exceeded aggregation buffer limits")
+    else:
+        return stream_response
+
+    if not chunks:
+        return litellm.ModelResponse(
+            choices=[{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        )
+    return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
 def completion_error(error: Exception) -> tuple[int, dict]:
@@ -400,12 +438,37 @@ async def route_request(request: Request, full_path: str):
             )
         else:
             # Non-streaming request (100% PRE_EMIT)
+            # Adaptive stream check: if upstream is known to require streaming, fetch via stream aggregation
+            if upstream_base in STREAM_ONLY_UPSTREAMS:
+                kwargs["stream"] = True
+                kwargs["stream_options"] = {"include_usage": True}
+                logger.info("Upstream %s is known stream-only; fetching via stream aggregation...", upstream_base)
+
             response = None
+            msgs = anthropic_body.get("messages", [])
             for attempt in range(max_pre_emit_retries + 1):
                 try:
                     response = await litellm.acompletion(**kwargs)
+                    if kwargs.get("stream"):
+                        response = await aggregate_stream_to_model_response(response, messages=msgs)
                     break
                 except Exception as e:
+                    if not kwargs.get("stream") and is_stream_required_error(e):
+                        logger.info(
+                            "Upstream %s rejected non-streaming request with stream_required; "
+                            "marking upstream as stream-only and falling back to stream aggregation...",
+                            upstream_base
+                        )
+                        STREAM_ONLY_UPSTREAMS.add(upstream_base)
+                        kwargs["stream"] = True
+                        kwargs["stream_options"] = {"include_usage": True}
+                        try:
+                            stream_resp = await litellm.acompletion(**kwargs)
+                            response = await aggregate_stream_to_model_response(stream_resp, messages=msgs)
+                            break
+                        except Exception as stream_err:
+                            e = stream_err
+
                     if attempt < max_pre_emit_retries and is_transient_error(e):
                         delay = backoff_base * (2 ** attempt) + random.uniform(0.05, 0.15)
                         logger.warning(
