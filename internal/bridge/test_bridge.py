@@ -183,8 +183,9 @@ class BridgeContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("usage", data)
-        self.assertEqual(data["usage"]["input_tokens"], 0)
-        self.assertEqual(data["usage"]["output_tokens"], 0)
+        self.assertIsInstance(data["usage"]["input_tokens"], int)
+        self.assertIsInstance(data["usage"]["output_tokens"], int)
+        self.assertGreater(data["usage"]["input_tokens"], 0)
 
     def test_count_tokens_endpoint(self):
         body = {
@@ -530,5 +531,139 @@ class BridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(req_resp.status_code, 503)
             self.assertEqual(req_resp.json()["error"]["type"], "service_unavailable")
+
+    def test_parse_upstream_target_codex(self):
+        base, endpoint = bridge.parse_upstream_target("/codex/v1/messages")
+        self.assertEqual(base, "http://127.0.0.1:8787/v1")
+        self.assertEqual(endpoint, "/v1/messages")
+
+        base, endpoint = bridge.parse_upstream_target("/https/chatgpt.com/backend-api/codex/v1/messages")
+        self.assertEqual(base, "https://chatgpt.com/backend-api/codex/v1")
+        self.assertEqual(endpoint, "/v1/messages")
+
+    async def test_codex_routing_uses_chatgpt_provider(self):
+        import httpx
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as mock_acompletion, \
+             patch.object(bridge, "sync_codex_auth") as mock_sync:
+            mock_acompletion.return_value = litellm.ModelResponse(
+                choices=[{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            )
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/https/chatgpt.com/backend-api/codex/v1/messages",
+                    headers={"x-api-key": "dummy"},
+                    json={
+                        "model": "gpt-6.1-sol[1m]",
+                        "messages": [{"role": "user", "content": "hi"}]
+                    }
+                )
+                self.assertEqual(resp.status_code, 200)
+                mock_sync.assert_called_once()
+                mock_acompletion.assert_called_once()
+                call_kwargs = mock_acompletion.call_args[1]
+                self.assertEqual(call_kwargs["model"], "chatgpt/gpt-6.1-sol")
+                self.assertNotIn("api_base", call_kwargs)
+                self.assertNotIn("api_key", call_kwargs)
+
+    async def test_codex_usage_limit_error_formatting_and_retry_after(self):
+        import httpx
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as mock_acompletion, \
+             patch.object(bridge, "sync_codex_auth"):
+            raw_err = litellm.RateLimitError(
+                message='RateLimitError: ChatgptException - {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":1792600030,"limit_window_minutes":300,"resets_in_seconds":2515}}',
+                model="chatgpt/gpt-6.1-sol",
+                llm_provider="chatgpt",
+                response=None
+            )
+            raw_err.status_code = 429
+            mock_acompletion.side_effect = raw_err
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/https/chatgpt.com/backend-api/codex/v1/messages",
+                    headers={"x-api-key": "dummy"},
+                    json={
+                        "model": "gpt-6.1-sol[1m]",
+                        "messages": [{"role": "user", "content": "hi"}]
+                    }
+                )
+                self.assertEqual(resp.status_code, 429)
+                self.assertEqual(resp.headers.get("retry-after"), "2515")
+                self.assertEqual(resp.headers.get("anthropic-ratelimit-unified-status"), "rejected")
+                self.assertEqual(resp.headers.get("anthropic-ratelimit-unified-reset"), "1792600030")
+                data = resp.json()
+                self.assertEqual(data["error"]["type"], "rate_limit_error")
+                self.assertIn("ChatGPT Plus Codex usage limit reached", data["error"]["message"])
+                self.assertIn("Quota resets in 42 minutes", data["error"]["message"])
+
+    async def test_codex_proxy_8787_syncs_auth_and_forwards_session_id(self):
+        import httpx
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as mock_acompletion, \
+             patch.object(bridge, "sync_codex_auth") as mock_sync:
+            mock_acompletion.return_value = litellm.ModelResponse(
+                choices=[{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            )
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/http/127.0.0.1:8787/v1/v1/messages",
+                    headers={
+                        "x-api-key": "dummy",
+                        "x-claude-code-session-id": "test-session-12345"
+                    },
+                    json={
+                        "model": "gpt-6.1-sol[1m]",
+                        "messages": [{"role": "user", "content": "hi"}]
+                    }
+                )
+                self.assertEqual(resp.status_code, 200)
+                mock_sync.assert_called_once()
+                mock_acompletion.assert_called_once()
+                call_kwargs = mock_acompletion.call_args[1]
+                self.assertEqual(call_kwargs["model"], "openai/gpt-6.1-sol")
+                self.assertEqual(call_kwargs["api_base"], "http://127.0.0.1:8787/v1")
+                self.assertIn("extra_headers", call_kwargs)
+                self.assertEqual(call_kwargs["extra_headers"]["x-session-id"], "test-session-12345")
+
+    async def test_usage_with_cached_tokens_maps_to_anthropic_cache_read(self):
+        import httpx
+        with patch.object(bridge.litellm, "acompletion", new_callable=AsyncMock) as mock_acompletion:
+            mock_acompletion.return_value = litellm.ModelResponse(
+                choices=[{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "prompt_tokens_details": {"cached_tokens": 80}
+                }
+            )
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=bridge.app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/http/127.0.0.1:8787/v1/v1/messages",
+                    headers={"x-api-key": "dummy"},
+                    json={
+                        "model": "gpt-6.1-sol[1m]",
+                        "messages": [{"role": "user", "content": "hi"}]
+                    }
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertIn("usage", data)
+                self.assertEqual(data["usage"]["input_tokens"], 20)
+                self.assertEqual(data["usage"]["cache_read_input_tokens"], 80)
+                self.assertEqual(data["usage"]["output_tokens"], 20)
+
 if __name__ == "__main__":
     unittest.main()

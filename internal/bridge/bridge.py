@@ -11,13 +11,14 @@
 import os
 import re
 import sys
+import time
 import json
 import fcntl
 import asyncio
 import hashlib
 import logging
-import asyncio
 import random
+import warnings
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -27,6 +28,9 @@ import httpx
 import uvicorn
 import litellm
 from litellm.llms.anthropic.pass_through.adapters.transformation import AnthropicAdapter
+
+# Suppress pydantic serialization warnings for custom schema fields
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("claude-bridge")
@@ -54,6 +58,16 @@ adapter = AnthropicAdapter()
 DEFAULT_FALLBACK_MODEL = "gpt-6.1-sol"
 
 STREAM_ONLY_UPSTREAMS: set[str] = set()
+
+_codex_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def get_codex_semaphore() -> asyncio.Semaphore:
+    """Returns an asyncio.Semaphore to gate concurrent initiations to Codex backend."""
+    global _codex_semaphore
+    if _codex_semaphore is None:
+        _codex_semaphore = asyncio.Semaphore(2)
+    return _codex_semaphore
 
 STATE_READY = "READY"
 STATE_DRAINING = "DRAINING"
@@ -155,7 +169,7 @@ async def aggregate_stream_to_model_response(stream_response, messages: list) ->
     return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
-def completion_error(error: Exception) -> tuple[int, dict]:
+def completion_error(error: Exception) -> tuple[int, dict, dict[str, str]]:
     status = getattr(error, "status_code", None)
     if not isinstance(status, int) or not 400 <= status <= 599:
         status = 500
@@ -169,22 +183,135 @@ def completion_error(error: Exception) -> tuple[int, dict]:
         429: "rate_limit_error",
         529: "overloaded_error",
     }.get(status, "api_error")
+
+    headers: dict[str, str] = {}
+    err_str = str(error)
+
+    if "usage_limit_reached" in err_str:
+        resets_in = None
+        m_sec = re.search(r'"resets_in_seconds"\s*:\s*(\d+)', err_str)
+        if m_sec:
+            resets_in = int(m_sec.group(1))
+
+        m_at = re.search(r'"resets_at"\s*:\s*(\d+)', err_str)
+        resets_at_str = ""
+        resets_at_val = None
+        if m_at:
+            import datetime
+            ts = int(m_at.group(1))
+            resets_at_val = ts
+            resets_at_str = f" at {datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')}"
+        elif resets_in is not None:
+            resets_at_val = int(time.time() + resets_in)
+
+        # Inject Anthropic unified rate-limit headers so Claude Code natively
+        # triggers onQuotaWindowWait (suspends session and resumes when quota recovers).
+        headers["anthropic-ratelimit-unified-status"] = "rejected"
+        if resets_at_val is not None:
+            headers["anthropic-ratelimit-unified-reset"] = str(resets_at_val)
+
+        if resets_in is not None:
+            headers["retry-after"] = str(resets_in)
+            mins = max(1, round(resets_in / 60))
+            friendly_msg = (
+                f"ChatGPT Plus Codex usage limit reached (5-hour window). "
+                f"Quota resets in {mins} minutes{resets_at_str}."
+            )
+        else:
+            friendly_msg = "ChatGPT Plus Codex usage limit reached (5-hour window)."
+    elif "litellm." in err_str:
+        friendly_msg = re.sub(r"^(litellm\.\w+:\s*)+", "", err_str).strip()
+    else:
+        friendly_msg = err_str
+
     return status, {
         "type": "error",
-        "error": {"type": error_type, "message": str(error)},
-    }
+        "error": {"type": error_type, "message": friendly_msg},
+    }, headers
+
+
+def _atomic_write_json(path: str, data: dict, mode: int = 0o600) -> None:
+    dir_name = os.path.dirname(path)
+    os.makedirs(dir_name, exist_ok=True)
+    tmp_path = f"{path}.tmp.{os.getpid()}"
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(tmp_path, flags, mode)
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def sync_codex_auth() -> None:
+    """Bidirectionally synchronize OAuth tokens between ~/.codex/auth.json and LiteLLM's auth file with atomic writes and 0600 permissions."""
+    codex_file = os.path.expanduser("~/.codex/auth.json")
+    litellm_dir = os.path.expanduser("~/.config/litellm/chatgpt")
+    litellm_file = os.path.join(litellm_dir, "auth.json")
+    if not os.path.exists(codex_file):
+        return
+    try:
+        with open(codex_file, "r", encoding="utf-8") as f:
+            c_data = json.load(f)
+        c_tokens = c_data.get("tokens", {}) if isinstance(c_data, dict) else {}
+
+        l_data = {}
+        if os.path.exists(litellm_file):
+            try:
+                with open(litellm_file, "r", encoding="utf-8") as f:
+                    l_data = json.load(f)
+            except Exception:
+                l_data = {}
+
+        c_access = c_tokens.get("access_token")
+        l_access = l_data.get("access_token")
+
+        # Case 1: LiteLLM file doesn't exist or codex has a different access token
+        if c_access and c_access != l_access:
+            litellm_payload = {
+                "access_token": c_access,
+                "refresh_token": c_tokens.get("refresh_token"),
+                "id_token": c_tokens.get("id_token"),
+                "account_id": c_tokens.get("account_id"),
+            }
+            _atomic_write_json(litellm_file, litellm_payload, 0o600)
+        # Case 2: LiteLLM refreshed the access token (and codex does not have it yet)
+        elif l_access and l_access != c_access and isinstance(c_data, dict) and "tokens" in c_data:
+            c_data["tokens"]["access_token"] = l_access
+            if l_data.get("refresh_token"):
+                c_data["tokens"]["refresh_token"] = l_data["refresh_token"]
+            if l_data.get("id_token"):
+                c_data["tokens"]["id_token"] = l_data["id_token"]
+            if l_data.get("account_id"):
+                c_data["tokens"]["account_id"] = l_data["account_id"]
+            _atomic_write_json(codex_file, c_data, 0o600)
+    except Exception as e:
+        logger.warning("Error syncing auth between codex and litellm: %s", e)
 
 
 def parse_upstream_target(path: str) -> tuple[str, str]:
     """
     Extracts the upstream base URL and the sub-endpoint from the incoming path.
     Supported path patterns:
+      /codex/v1/messages                                -> (http://127.0.0.1:8787/v1, /v1/messages)
       /https/<host>/<subpath>/v1/messages/count_tokens -> (https://<host>/<subpath>/v1, /v1/messages/count_tokens)
       /https/<host>/<subpath>/v1/messages              -> (https://<host>/<subpath>/v1, /v1/messages)
       /http/<host>/<subpath>/v1/messages               -> (http://<host>/<subpath>/v1, /v1/messages)
       /proxy/<url>/v1/messages                          -> (<url>, /v1/messages)
     """
     cleaned = path.lstrip("/")
+    if cleaned == "codex" or cleaned.startswith("codex/"):
+        rest = "/" + cleaned.split("/", 1)[1] if "/" in cleaned else ""
+        for endpoint in ["/v1/messages/count_tokens", "/v1/messages", "/api/hello", "/v1/models"]:
+            if rest.endswith(endpoint):
+                return "http://127.0.0.1:8787/v1", endpoint
+        return "http://127.0.0.1:8787/v1", rest
+
     m = re.match(r"^(https?)/([^/]+)(/.*)?$", cleaned)
     if m:
         proto, host, rest = m.group(1), m.group(2), m.group(3) or ""
@@ -308,10 +435,22 @@ async def route_request(request: Request, full_path: str):
             content={"type": "error", "error": {"type": "invalid_request_error", "message": str(e)}}
         )
 
-    # Resolve target model
+    # Identify if upstream is direct ChatGPT subscription backend (bypassing local proxy)
+    is_codex = "chatgpt.com" in upstream_base
+
+    # Resolve target model across both official Codex and third-party relay
     incoming_model = anthropic_body.get("model", "")
     if not incoming_model or incoming_model.startswith("claude-"):
-        target_model = DEFAULT_FALLBACK_MODEL
+        if "haiku" in incoming_model:
+            target_model = "gpt-6-luna"
+        elif "opus" in incoming_model:
+            target_model = "gpt-6.1-sol"
+        elif "sonnet" in incoming_model:
+            target_model = "gpt-6.1-sol"
+        elif "fable" in incoming_model:
+            target_model = "gpt-6-astra"
+        else:
+            target_model = DEFAULT_FALLBACK_MODEL
     else:
         target_model = incoming_model
 
@@ -329,7 +468,7 @@ async def route_request(request: Request, full_path: str):
             chars = sum(len(str(m.get("content", ""))) for m in anthropic_body.get("messages", []))
             return JSONResponse(content={"input_tokens": max(1, chars // 4)})
 
-    logger.info("Routing request: Model %s -> upstream %s | Upstream %s", incoming_model, target_model, upstream_base)
+    logger.info("Routing request: Model %s -> upstream %s | Upstream %s (is_codex=%s)", incoming_model, target_model, upstream_base, is_codex)
 
     # Translate Anthropic parameters to OpenAI format via comprehensive adapter
     try:
@@ -354,21 +493,72 @@ async def route_request(request: Request, full_path: str):
     max_pre_emit_retries = 2
     backoff_base = 0.25
 
+    is_codex_direct = "chatgpt.com" in upstream_base
+    is_codex_proxy = ":8787" in upstream_base or "codex" in upstream_base
+    if is_codex_direct or is_codex_proxy:
+        sync_codex_auth()
+
+    if is_codex_direct:
+        model_name = f"chatgpt/{target_model}"
+        # Normalize and consolidate system messages for ChatGPT Codex Responses API.
+        # Codex rejects {"role": "system"} inside input items; all system text must be
+        # a single leading string so LiteLLM maps it cleanly to top-level instructions.
+        if "messages" in openai_params:
+            system_texts = []
+            non_system_messages = []
+            for msg in openai_params["messages"]:
+                if msg.get("role") == "system":
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        text = "\n\n".join(
+                            part.get("text", "")
+                            for part in content
+                            if isinstance(part, dict) and part.get("type") == "text"
+                        )
+                    else:
+                        text = str(content or "")
+                    if text:
+                        system_texts.append(text)
+                else:
+                    non_system_messages.append(msg)
+
+            if system_texts:
+                merged_system = "\n\n".join(system_texts)
+                openai_params["messages"] = [{"role": "system", "content": merged_system}] + non_system_messages
+            else:
+                openai_params["messages"] = non_system_messages
+    else:
+        model_name = f"openai/{target_model}"
+
     try:
         # Agnostic hydration: start from adapter-translated OpenAI request dictionary,
         # then inject custom routing, credentials, and resilience policies.
         kwargs = {
             **openai_params,
-            "model": f"openai/{target_model}",
-            "api_base": upstream_base,
-            "api_key": api_key,
+            "model": model_name,
             "stream": is_stream,
             "num_retries": 2,
         }
+        if not is_codex_direct:
+            kwargs["api_base"] = upstream_base
+            kwargs["api_key"] = api_key
         if is_stream:
             kwargs["stream_options"] = {"include_usage": True}
 
+        session_id = (
+            request.headers.get("x-claude-code-session-id")
+            or request.headers.get("x-session-id")
+            or request.headers.get("session-id")
+            or os.environ.get("CODEX_COMPANION_SESSION_ID")
+        )
+        if session_id:
+            kwargs.setdefault("extra_headers", {})["x-session-id"] = session_id
+            kwargs["extra_headers"]["x-claude-code-session-id"] = session_id
+
         logger.info("Dispatching to litellm.acompletion (stream=%s)...", is_stream)
+        use_codex_semaphore = is_codex_direct or is_codex_proxy
+        codex_sem = get_codex_semaphore() if use_codex_semaphore else None
+
         if is_stream:
             # Phase 1: PRE_EMIT - transparent retry loop before HTTP headers are sent.
             first_chunk = None
@@ -376,15 +566,27 @@ async def route_request(request: Request, full_path: str):
 
             for attempt in range(max_pre_emit_retries + 1):
                 try:
-                    response = await litellm.acompletion(**kwargs)
-                    anthropic_stream = adapter.translate_completion_output_params_streaming(
-                        response,
-                        model=out_model,
-                        tool_name_mapping=tool_name_mapping,
-                        is_async=True
-                    )
-                    # Verify stream is alive by prefetching the initial chunk
-                    first_chunk = await async_next_chunk(anthropic_stream)
+                    if codex_sem:
+                        async with codex_sem:
+                            response = await litellm.acompletion(**kwargs)
+                            anthropic_stream = adapter.translate_completion_output_params_streaming(
+                                response,
+                                model=out_model,
+                                tool_name_mapping=tool_name_mapping,
+                                is_async=True
+                            )
+                            # Verify stream is alive by prefetching the initial chunk
+                            first_chunk = await async_next_chunk(anthropic_stream)
+                    else:
+                        response = await litellm.acompletion(**kwargs)
+                        anthropic_stream = adapter.translate_completion_output_params_streaming(
+                            response,
+                            model=out_model,
+                            tool_name_mapping=tool_name_mapping,
+                            is_async=True
+                        )
+                        # Verify stream is alive by prefetching the initial chunk
+                        first_chunk = await async_next_chunk(anthropic_stream)
                     break
                 except Exception as e:
                     if attempt < max_pre_emit_retries and is_transient_error(e):
@@ -418,7 +620,7 @@ async def route_request(request: Request, full_path: str):
                     logger.error("Error streaming completion (POST_EMIT mid-stream): %s", e, exc_info=True)
                     # HTTP headers have already been sent; report the error as
                     # an Anthropic SSE event instead of dropping the connection.
-                    _, payload = completion_error(e)
+                    _, payload, _ = completion_error(e)
                     yield f"event: error\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
                 finally:
                     if anthropic_stream and hasattr(anthropic_stream, "aclose"):
@@ -448,9 +650,15 @@ async def route_request(request: Request, full_path: str):
             msgs = anthropic_body.get("messages", [])
             for attempt in range(max_pre_emit_retries + 1):
                 try:
-                    response = await litellm.acompletion(**kwargs)
-                    if kwargs.get("stream"):
-                        response = await aggregate_stream_to_model_response(response, messages=msgs)
+                    if codex_sem:
+                        async with codex_sem:
+                            response = await litellm.acompletion(**kwargs)
+                            if kwargs.get("stream"):
+                                response = await aggregate_stream_to_model_response(response, messages=msgs)
+                    else:
+                        response = await litellm.acompletion(**kwargs)
+                        if kwargs.get("stream"):
+                            response = await aggregate_stream_to_model_response(response, messages=msgs)
                     break
                 except Exception as e:
                     if not kwargs.get("stream") and is_stream_required_error(e):
@@ -480,11 +688,22 @@ async def route_request(request: Request, full_path: str):
                     raise
 
             # Guard against upstream responses missing the usage field
-            if not getattr(response, "usage", None):
+            if not getattr(response, "usage", None) or getattr(response.usage, "total_tokens", 0) == 0:
                 try:
-                    response.usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                    messages = openai_params.get("messages", [])
+                    calc_in = litellm.token_counter(model=model_name, messages=messages) if messages else 0
+                    resp_text = ""
+                    if getattr(response, "choices", None) and len(response.choices) > 0:
+                        resp_text = getattr(response.choices[0].message, "content", "") or ""
+                    calc_out = litellm.token_counter(model=model_name, text=resp_text) if resp_text else 0
+                    response.usage = litellm.Usage(
+                        prompt_tokens=calc_in,
+                        completion_tokens=calc_out,
+                        total_tokens=calc_in + calc_out
+                    )
                 except Exception:
-                    pass
+                    if not getattr(response, "usage", None):
+                        response.usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
             anthropic_resp = adapter.translate_completion_output_params(
                 response,
@@ -504,8 +723,8 @@ async def route_request(request: Request, full_path: str):
 
     except Exception as e:
         logger.error("Error executing completion: %s", e, exc_info=True)
-        status, payload = completion_error(e)
-        return JSONResponse(status_code=status, content=payload)
+        status, payload, err_headers = completion_error(e)
+        return JSONResponse(status_code=status, content=payload, headers=err_headers or None)
 
 async def run_server(port: int):
     global global_server
