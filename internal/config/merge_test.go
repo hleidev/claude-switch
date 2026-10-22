@@ -202,3 +202,40 @@ func TestBuildEnvOpenAIProtocolWrapsBaseURL(t *testing.T) {
 		t.Errorf("CLAUDE_SWITCH_PROTOCOL = %q, want openai", proto)
 	}
 }
+
+func TestBuildEnvCodexPreset(t *testing.T) {
+	c := &Config{Providers: map[string]Provider{
+		"codex": {},
+	}}
+	preset := map[string]string{
+		"ANTHROPIC_BASE_URL":     "https://chatgpt.com/backend-api/codex",
+		"CLAUDE_SWITCH_PROTOCOL": "openai",
+	}
+
+	got, err := c.BuildEnv("codex", preset)
+	if err != nil {
+		t.Fatalf("BuildEnv: %v", err)
+	}
+
+	envMap := map[string]string{}
+	for _, v := range got {
+		envMap[v.Key] = v.Value
+	}
+
+	wantURL := "http://127.0.0.1:8088/https/chatgpt.com/backend-api/codex"
+	if envMap["ANTHROPIC_BASE_URL"] != wantURL {
+		t.Errorf("ANTHROPIC_BASE_URL = %q, want %q", envMap["ANTHROPIC_BASE_URL"], wantURL)
+	}
+	if envMap["CLAUDE_SWITCH_PROTOCOL"] != "openai" {
+		t.Errorf("CLAUDE_SWITCH_PROTOCOL = %q, want openai", envMap["CLAUDE_SWITCH_PROTOCOL"])
+	}
+	if envMap["ANTHROPIC_AUTH_TOKEN"] != "codex-oauth-session" {
+		t.Errorf("ANTHROPIC_AUTH_TOKEN = %q, want codex-oauth-session", envMap["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if envMap["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "1000000" {
+		t.Errorf("CLAUDE_CODE_AUTO_COMPACT_WINDOW = %q, want 1000000", envMap["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+	}
+	if envMap["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "1000000" {
+		t.Errorf("CLAUDE_CODE_MAX_CONTEXT_TOKENS = %q, want 1000000", envMap["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
+	}
+}

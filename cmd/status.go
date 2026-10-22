@@ -27,9 +27,16 @@ var statusCmd = &cobra.Command{
 			fmt.Fprintln(out, "This terminal:   claude (OAuth) — no provider injected")
 		} else {
 			fmt.Fprintf(out, "This terminal:   %s\n", current)
-			if p, ok := cfg.Providers[current]; ok && p.Protocol() == config.ProtocolOpenAI {
+			if effectiveProtocol(cfg, current) == config.ProtocolOpenAI {
 				fmt.Fprintln(out, "  protocol:      openai (via bridge)")
-				fmt.Fprintf(out, "  upstream:      %s\n", p.UpstreamBaseURL())
+				upstream := ""
+				if p, ok := cfg.Providers[current]; ok {
+					upstream = p.UpstreamBaseURL()
+				}
+				if upstream == "" {
+					upstream = resolvedBaseURL(cfg, current)
+				}
+				fmt.Fprintf(out, "  upstream:      %s\n", upstream)
 			}
 			fmt.Fprintf(out, "  base_url:      %s\n", os.Getenv("ANTHROPIC_BASE_URL"))
 			fmt.Fprintf(out, "  model:         %s\n", os.Getenv("ANTHROPIC_MODEL"))

@@ -57,11 +57,11 @@ const (
 // Default OpenAI protocol model mappings by Claude role (native 1M context support).
 const (
 	DefaultOpenAIOpusModel     = "gpt-6.1-sol[1m]"
-	DefaultOpenAISonnetModel   = "gpt-6-sol[1m]"
+	DefaultOpenAISonnetModel   = "gpt-6.1-sol[1m]"
 	DefaultOpenAIHaikuModel    = "gpt-6-luna[1m]"
 	DefaultOpenAIFableModel    = "gpt-6-astra[1m]"
 	DefaultOpenAISubagentModel = "gpt-6-luna[1m]"
-	DefaultOpenAIModel         = "gpt-6-sol[1m]"
+	DefaultOpenAIModel         = "gpt-6.1-sol[1m]"
 )
 
 // AutoCompactWindowKey is the environment variable Claude Code uses for compaction token budget.

@@ -27,6 +27,20 @@ func TestApplyAddPresetWritesKeyOnly(t *testing.T) {
 	}
 }
 
+func TestApplyAddCodexNativeAuth(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{}}
+	if err := applyAdd(cfg, addOptions{Name: "codex", Key: "auth:codex"}); err != nil {
+		t.Fatalf("applyAdd: %v", err)
+	}
+	p, ok := cfg.Providers["codex"]
+	if !ok {
+		t.Fatal("codex provider missing")
+	}
+	if len(p) != 0 {
+		t.Errorf("codex should write 0 entries to config, got %+v", p)
+	}
+}
+
 func TestApplyAddCustomRequiresBaseURL(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.Provider{}}
 	// "mycustom" is not a preset, so base_url is required.
@@ -126,12 +140,12 @@ func TestApplyAddOpenAIProtocolDefaultModels(t *testing.T) {
 		t.Errorf("BaseURL = %q, want https://wawazz.xyz", p.BaseURL())
 	}
 
-	// Verify tier mappings: Opus -> gpt-6.1-sol[1m], Sonnet -> gpt-6-sol[1m], Haiku -> gpt-6-luna[1m], Fable -> gpt-6-astra[1m]
+	// Verify tier mappings: Opus -> gpt-6.1-sol[1m], Sonnet -> gpt-6.1-sol[1m], Haiku -> gpt-6-luna[1m], Fable -> gpt-6-astra[1m]
 	if p[config.OpusModelKey] != "gpt-6.1-sol[1m]" {
 		t.Errorf("Opus = %q, want gpt-6.1-sol[1m]", p[config.OpusModelKey])
 	}
-	if p[config.SonnetModelKey] != "gpt-6-sol[1m]" {
-		t.Errorf("Sonnet = %q, want gpt-6-sol[1m]", p[config.SonnetModelKey])
+	if p[config.SonnetModelKey] != "gpt-6.1-sol[1m]" {
+		t.Errorf("Sonnet = %q, want gpt-6.1-sol[1m]", p[config.SonnetModelKey])
 	}
 	if p[config.HaikuModelKey] != "gpt-6-luna[1m]" {
 		t.Errorf("Haiku = %q, want gpt-6-luna[1m]", p[config.HaikuModelKey])
@@ -142,8 +156,8 @@ func TestApplyAddOpenAIProtocolDefaultModels(t *testing.T) {
 	if p[config.FableModelKey] != "gpt-6-astra[1m]" {
 		t.Errorf("Fable = %q, want gpt-6-astra[1m]", p[config.FableModelKey])
 	}
-	if p[config.ModelKey] != "gpt-6-sol[1m]" {
-		t.Errorf("Model = %q, want gpt-6-sol[1m]", p[config.ModelKey])
+	if p[config.ModelKey] != "gpt-6.1-sol[1m]" {
+		t.Errorf("Model = %q, want gpt-6.1-sol[1m]", p[config.ModelKey])
 	}
 	if p[config.AutoCompactWindowKey] != "1000000" {
 		t.Errorf("AutoCompactWindow = %q, want 1000000", p[config.AutoCompactWindowKey])

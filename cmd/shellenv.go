@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -51,7 +52,7 @@ var shellenvCmd = &cobra.Command{
 			return nil
 		}
 
-		p, ok := cfg.Providers[name]
+		_, ok := cfg.Providers[name]
 		if !ok {
 			if shellenvAnnounce {
 				return fmt.Errorf("provider %q not found", name)
@@ -60,13 +61,23 @@ var shellenvCmd = &cobra.Command{
 			return nil
 		}
 
-		if p.Protocol() == config.ProtocolOpenAI {
+		if effectiveProtocol(cfg, name) == config.ProtocolOpenAI {
 			if err := bridge.EnsureRunning(); err != nil {
 				if shellenvAnnounce {
 					return fmt.Errorf("start OpenAI bridge: %w", err)
 				}
 				fmt.Fprintln(errOut, "claude-switch: OpenAI bridge error:", err)
 				return nil
+			}
+
+			if name == "codex" || strings.Contains(resolvedBaseURL(cfg, name), "8787") {
+				if err := bridge.EnsureCodexProxyRunning(); err != nil {
+					if shellenvAnnounce {
+						return fmt.Errorf("start Codex proxy: %w", err)
+					}
+					fmt.Fprintln(errOut, "claude-switch: Codex proxy error:", err)
+					return nil
+				}
 			}
 		}
 
@@ -83,11 +94,15 @@ var shellenvCmd = &cobra.Command{
 		}
 		fmt.Fprint(out, code)
 		if shellenvAnnounce {
-			if authToken == "" {
+			if authToken == "" && name != "codex" {
 				fmt.Fprintf(errOut, "⚠ %s has no auth_token; claude will fall back to OAuth (run: cs edit %s)\n", name, name)
 			}
-			if p.Protocol() == config.ProtocolOpenAI {
-				fmt.Fprintf(errOut, "✓ switched to %s (protocol: openai -> bridge :%d)\n", name, bridge.DefaultPort)
+			if effectiveProtocol(cfg, name) == config.ProtocolOpenAI {
+				if name == "codex" || strings.Contains(resolvedBaseURL(cfg, name), "8787") {
+					fmt.Fprintf(errOut, "✓ switched to %s (codex proxy :%d -> bridge :%d)\n", name, bridge.DefaultCodexProxyPort, bridge.DefaultPort)
+				} else {
+					fmt.Fprintf(errOut, "✓ switched to %s (protocol: openai -> bridge :%d)\n", name, bridge.DefaultPort)
+				}
 			} else {
 				fmt.Fprintf(errOut, "✓ switched to %s\n", name)
 			}
@@ -100,4 +115,20 @@ var shellenvCmd = &cobra.Command{
 func init() {
 	shellenvCmd.Flags().BoolVar(&shellenvAnnounce, "announce", false, "print human-readable status to stderr")
 	rootCmd.AddCommand(shellenvCmd)
+}
+
+// effectiveProtocol returns the provider's protocol, checking the user's config first
+// and falling back to the built-in preset if configured there.
+func effectiveProtocol(cfg *config.Config, name string) string {
+	if p, ok := cfg.Providers[name]; ok {
+		if proto := p.Protocol(); proto != config.ProtocolAnthropic {
+			return proto
+		}
+	}
+	if preset, ok := presets.Lookup(name); ok {
+		if proto, ok := preset[config.ProtocolKey]; ok && proto != "" {
+			return strings.ToLower(strings.TrimSpace(proto))
+		}
+	}
+	return config.ProtocolAnthropic
 }

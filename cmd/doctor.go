@@ -61,6 +61,13 @@ var doctorCmd = &cobra.Command{
 			case hasKey:
 				registerResolvedKeySilent(keyVal)
 				fmt.Fprintf(out, "%s provider %q has valid key via %s (%s)\n", ok(true), name, src, secret.Mask(keyVal))
+			case name == "codex":
+				hasCodex, _ := detectCodexAuth()
+				if hasCodex {
+					fmt.Fprintf(out, "%s provider %q has valid native auth via ~/.codex/auth.json\n", ok(true), name)
+				} else {
+					fmt.Fprintf(out, "%s provider %q has no active login in ~/.codex/auth.json\n", ok(false), name)
+				}
 			case keyErr != nil:
 				fmt.Fprintf(out, "%s provider %q key error (%s): %v\n", ok(false), name, src, keyErr)
 			default:
@@ -71,7 +78,7 @@ var doctorCmd = &cobra.Command{
 
 		hasOpenAI := false
 		for _, name := range sortedNames(cfg) {
-			if cfg.Providers[name].Protocol() == config.ProtocolOpenAI {
+			if effectiveProtocol(cfg, name) == config.ProtocolOpenAI {
 				hasOpenAI = true
 				break
 			}
@@ -84,6 +91,15 @@ var doctorCmd = &cobra.Command{
 				fmt.Fprintf(out, "%s OpenAI bridge running on :%d (pid %d)\n", ok(true), bridge.DefaultPort, pid)
 			} else {
 				fmt.Fprintf(out, "… OpenAI bridge not running on :%d (auto-starts on `cs use`)\n", bridge.DefaultPort)
+			}
+		}
+
+		if _, hasCodex := cfg.Providers["codex"]; hasCodex {
+			running, pid, _ := bridge.CodexProxyStatus()
+			if running {
+				fmt.Fprintf(out, "%s Codex proxy running on :%d (pid %d)\n", ok(true), bridge.DefaultCodexProxyPort, pid)
+			} else {
+				fmt.Fprintf(out, "… Codex proxy not running on :%d (auto-starts on `cs use codex`)\n", bridge.DefaultCodexProxyPort)
 			}
 		}
 

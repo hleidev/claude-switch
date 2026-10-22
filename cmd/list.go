@@ -33,9 +33,11 @@ var listCmd = &cobra.Command{
 			raw := p.AuthTokenRaw()
 			if src := secret.FormatSource(raw); src != "none" {
 				key = "key: " + src
+			} else if name == "codex" {
+				key = "auth: ~/.codex/auth.json"
 			}
 			protoTag := ""
-			if p.Protocol() == config.ProtocolOpenAI {
+			if effectiveProtocol(cfg, name) == config.ProtocolOpenAI {
 				protoTag = " [openai]"
 			}
 			urlStr := p.UpstreamBaseURL()

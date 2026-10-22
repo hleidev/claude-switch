@@ -285,8 +285,8 @@ func TestDetectKeychainSmartAndAll(t *testing.T) {
 		t.Fatalf("expected smart match for underscore converted name, got %+v, ok=%v", match, ok)
 	}
 
-	// Case 5: Env-style name matching (e.g. CODERPLAN_API_KEY with dotfiles-secret account)
-	mock.items["CODERPLAN_API_KEY/dotfiles-secret"] = "sk-dotfiles-coderplan"
+	// Case 5: Env-style name matching (e.g. CODERPLAN_API_KEY with dotfiles-sync account)
+	mock.items["CODERPLAN_API_KEY/dotfiles-sync"] = "sk-dotfiles-coderplan"
 	all := DetectKeychainAll("coderplan", "")
 	if len(all) != 2 {
 		t.Fatalf("expected 2 unique candidates for coderplan, got %d: %+v", len(all), all)

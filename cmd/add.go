@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -70,6 +73,20 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 	}
 
 	_, isPreset := presets.Lookup(opts.Name)
+	if opts.Name == "codex" {
+		p := config.Provider{}
+		if opts.Key != "" && opts.Key != "auth:codex" {
+			p[config.AuthTokenKey] = opts.Key
+		}
+		if opts.BaseURL != "" {
+			p[config.BaseURLKey] = opts.BaseURL
+		}
+		if opts.Protocol != "" && opts.Protocol != config.ProtocolOpenAI {
+			p[config.ProtocolKey] = opts.Protocol
+		}
+		cfg.Providers[opts.Name] = p
+		return nil
+	}
 	if !isPreset && opts.BaseURL == "" {
 		return fmt.Errorf("base_url is required for custom provider %q", opts.Name)
 	}
@@ -102,11 +119,11 @@ func applyAdd(cfg *config.Config, opts addOptions) error {
 		} else {
 			// Tier-specific default model mappings
 			p[config.OpusModelKey] = config.DefaultOpenAIOpusModel         // gpt-6.1-sol (heavy reasoning/flagship)
-			p[config.SonnetModelKey] = config.DefaultOpenAISonnetModel     // gpt-6-sol (main coding/reasoning)
+			p[config.SonnetModelKey] = config.DefaultOpenAISonnetModel     // gpt-6.1-sol (main coding/reasoning)
 			p[config.HaikuModelKey] = config.DefaultOpenAIHaikuModel       // gpt-6-luna (fast/lightweight)
 			p[config.FableModelKey] = config.DefaultOpenAIFableModel       // gpt-6-astra (exploratory/frontier)
 			p[config.SubagentModelKey] = config.DefaultOpenAISubagentModel // gpt-6-luna (subagents)
-			p[config.ModelKey] = config.DefaultOpenAIModel                 // gpt-6-sol (primary fallback)
+			p[config.ModelKey] = config.DefaultOpenAIModel                 // gpt-6.1-sol (primary fallback)
 		}
 
 		if opts.SonnetModel != "" {
@@ -303,14 +320,32 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	key, err := promptProviderKey(name, effectiveBaseURL, errOut)
-	if err != nil {
-		return err
+	var key string
+	if name == "codex" && addFromKeychain == "" && addFromEnv == "" && !addKeyStdin {
+		hasAuth, _ := detectCodexAuth()
+		if hasAuth {
+			fmt.Fprintln(errOut, "✓ Detected official Codex authentication (~/.codex/auth.json)")
+			key = "auth:codex"
+		} else {
+			fmt.Fprintln(errOut, "! No active Codex authentication found in ~/.codex/auth.json")
+			fmt.Fprintln(errOut, "  Please run official OpenAI codex login first.")
+			return fmt.Errorf("codex authentication not found in ~/.codex/auth.json")
+		}
+	} else {
+		var err error
+		key, err = promptProviderKey(name, effectiveBaseURL, errOut)
+		if err != nil {
+			return err
+		}
 	}
 
 	proto := addProtocol
 	if customProto != "" && (addProtocol == "" || addProtocol == config.ProtocolAnthropic) {
 		proto = customProto
+	} else if preset, ok := presets.Lookup(name); ok {
+		if pProto, ok := preset[config.ProtocolKey]; ok && pProto != "" && (addProtocol == "" || addProtocol == config.ProtocolAnthropic) {
+			proto = pProto
+		}
 	}
 	model := addModel
 	if customModel != "" && addModel == "" {
@@ -535,27 +570,55 @@ func finishAdd(cmd *cobra.Command, opts addOptions) {
 			}
 		}
 	}
-	registered := registerKeyBestEffort(cmd, opts.Key)
-
+	var registered bool
 	fmt.Fprintf(out, "✓ wrote '%s' → %s\n", opts.Name, path)
-	switch secret.DetectKind(opts.Key) {
-	case secret.KindKeychain:
-		fmt.Fprintf(out, "✓ key secured via %s\n", secret.FormatSource(opts.Key))
-	case secret.KindEnv, secret.KindOnePassword, secret.KindCommand:
-		fmt.Fprintf(out, "✓ key linked dynamically via %s\n", secret.FormatSource(opts.Key))
+	if opts.Name == "codex" && (opts.Key == "" || opts.Key == "auth:codex") {
+		fmt.Fprintln(out, "✓ linked official authentication (~/.codex/auth.json)")
+	} else {
+		registered = registerKeyBestEffort(cmd, opts.Key)
+		switch secret.DetectKind(opts.Key) {
+		case secret.KindKeychain:
+			fmt.Fprintf(out, "✓ key secured via %s\n", secret.FormatSource(opts.Key))
+		case secret.KindEnv, secret.KindOnePassword, secret.KindCommand:
+			fmt.Fprintf(out, "✓ key linked dynamically via %s\n", secret.FormatSource(opts.Key))
+		}
 	}
 	if opts.Protocol == config.ProtocolOpenAI {
 		fmt.Fprintf(out, "✓ protocol: openai (Opus: %s, Sonnet: %s, Haiku: %s, Fable: %s via bridge :8088)\n",
 			config.DefaultOpenAIOpusModel, config.DefaultOpenAISonnetModel, config.DefaultOpenAIHaikuModel, config.DefaultOpenAIFableModel)
 	}
 
-	if registered {
+	if opts.Name == "codex" && (opts.Key == "" || opts.Key == "auth:codex") {
+		// Native OAuth token managed via Bridge, no key registration needed
+	} else if registered {
 		fmt.Fprintln(out, "✓ key registered with Claude Code (~/.claude.json)")
 	} else {
 		fmt.Fprintln(out, "  (Claude Code will approve this key on first run)")
 	}
 	fmt.Fprintf(out, "  cs use %s      switch this terminal\n", opts.Name)
 	fmt.Fprintf(out, "  cs default %s  make it the default for new terminals\n", opts.Name)
+}
+
+// detectCodexAuth checks whether a valid official OpenAI Codex OAuth session exists in ~/.codex/auth.json.
+func detectCodexAuth() (bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	p := filepath.Join(home, ".codex", "auth.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false, nil
+	}
+	var data struct {
+		Tokens struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return false, nil
+	}
+	return strings.TrimSpace(data.Tokens.AccessToken) != "", nil
 }
 
 // probe performs a short best-effort reachability check against base_url.

@@ -65,13 +65,26 @@ func (c *Config) BuildEnv(name string, preset map[string]string) ([]EnvVar, erro
 		merged[k] = v
 	}
 
-	if p.Protocol() == ProtocolOpenAI {
+	proto := strings.ToLower(strings.TrimSpace(merged[ProtocolKey]))
+	if proto == ProtocolOpenAI {
 		bridgeBase := os.Getenv("CLAUDE_SWITCH_BRIDGE_BASE")
 		if bridgeBase == "" {
 			bridgeBase = DefaultBridgeBase
 		}
 		if rawURL, ok := merged[BaseURLKey]; ok && rawURL != "" {
 			merged[BaseURLKey] = WrapBridgeURL(bridgeBase, rawURL)
+		}
+		if _, ok := merged["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; !ok {
+			merged["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1000000"
+		}
+		if _, ok := merged["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]; !ok {
+			merged["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = "1000000"
+		}
+	}
+
+	if name == "codex" {
+		if _, ok := merged[AuthTokenKey]; !ok || merged[AuthTokenKey] == "" {
+			merged[AuthTokenKey] = "codex-oauth-session"
 		}
 	}
 
